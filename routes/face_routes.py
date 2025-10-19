@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from datetime import datetime, timedelta
 import requests
+from config.db_config import db
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from flask_jwt_extended import create_access_token
 from flask_limiter import Limiter
@@ -16,6 +17,7 @@ limiter = Limiter(key_func=get_remote_address, default_limits=[])
 
 # ✅ Hugging Face AI microservice base URL (change to your actual deployed Space)
 HF_AI_URL = "https://meuorii-face-recognition-attendance.hf.space"
+students_collection = db["students"] 
 
 # ---------------------------
 # Register Face (via Hugging Face)
@@ -33,6 +35,7 @@ def register_auto():
         # 🔗 Forward to Hugging Face Space
         res = requests.post(f"{HF_AI_URL}/register-auto", json=data, timeout=60)
         if res.status_code != 200:
+            print(f"⚠️ HF service returned {res.status_code}: {res.text}")
             return jsonify({"success": False, "error": "Hugging Face service error"}), res.status_code
 
         hf_result = res.json()
@@ -40,13 +43,12 @@ def register_auto():
         # ✅ Success and embedding received
         if hf_result.get("success") and hf_result.get("embeddings"):
             angle_embeddings = hf_result["embeddings"]
-            created_at = hf_result.get("created_at") or datetime.utcnow()
+            created_at = hf_result.get("created_at") or datetime.utcnow().isoformat()
 
             # 🔍 Fetch full student profile info from DB
-            student_doc = students_collection.find_one({"student_id": student_id})
+            student_doc = students_collection.find_one({"student_id": student_id}) or {}
             if not student_doc:
                 print(f"⚠️ No existing record found for {student_id}. Creating new one.")
-                student_doc = {}
 
             # 🧠 Build full update payload
             update_fields = {
@@ -63,8 +65,10 @@ def register_auto():
             }
 
             # 💾 Save to DB
-            save_face_data(student_id, update_fields)
-            print(f"✅ Saved embeddings and student info for {student_id} → {list(angle_embeddings.keys())}")
+            if save_face_data(student_id, update_fields):
+                print(f"✅ Saved embeddings and student info for {student_id} → {list(angle_embeddings.keys())}")
+            else:
+                print(f"⚠️ Failed to save embeddings for {student_id}")
 
         else:
             print(f"⚠️ Registration failed or no embeddings returned for {student_id}")
@@ -73,8 +77,10 @@ def register_auto():
         return jsonify(hf_result), 200
 
     except Exception as e:
+        import traceback
         print("❌ /register-auto error:", str(e))
-        return jsonify({"success": False, "error": "Internal server error"}), 500
+        print(traceback.format_exc())
+        return jsonify({"success": False, "error": f"Internal server error: {str(e)}"}), 500
 
 # ---------------------------
 # Face Login (via Hugging Face)

@@ -1,5 +1,5 @@
 from config.db_config import db
-import datetime
+from datetime import datetime  # ✅ FIXED import
 
 # Collections
 students_collection = db["students"]
@@ -14,24 +14,32 @@ def save_face_data(student_id, update_fields):
             print("❌ Missing student_id or update_fields.")
             return False
 
-        # 🧠 Split embeddings from other student info
+        # 🧠 Extract embeddings separately
         embeddings = update_fields.pop("embeddings", None)
 
-        # ✅ Prepare set operations for general info (like name, course, etc.)
+        # ✅ Prepare general student info (ensure capitalization)
         set_ops = {
-            "student_id": student_id,  # ensure always included
-            **update_fields
+            "student_id": student_id,
+            "First_Name": update_fields.get("First_Name"),
+            "Last_Name": update_fields.get("Last_Name"),
+            "Course": update_fields.get("Course"),
+            "Email": update_fields.get("Email"),
+            "Contact_Number": update_fields.get("Contact_Number"),
+            "Subjects": update_fields.get("Subjects", []),
+            "created_at": update_fields.get("created_at", datetime.utcnow()),
+            "registered": True
         }
 
-        # ✅ Prepare embedding fields (merge per angle)
+        # ✅ Merge embeddings per angle (e.g., embeddings.front, embeddings.left, etc.)
         if embeddings and isinstance(embeddings, dict):
             for angle, vector in embeddings.items():
-                set_ops[f"embeddings.{angle}"] = vector
+                if vector and isinstance(vector, list):
+                    set_ops[f"embeddings.{angle}"] = vector
 
-        # ✅ Final update operation
+        # ✅ Final MongoDB update
         update_ops = {
             "$set": set_ops,
-            "$setOnInsert": {"created_at": datetime.utcnow()}  # set created_at once
+            "$setOnInsert": {"created_at": datetime.utcnow()}
         }
 
         result = students_collection.update_one(
@@ -45,8 +53,11 @@ def save_face_data(student_id, update_fields):
         return True
 
     except Exception as e:
+        import traceback
         print("❌ MongoDB save error:", str(e))
+        print(traceback.format_exc())
         return False
+
 
 # -----------------------------
 # Normalize student document
@@ -56,14 +67,14 @@ def normalize_student(doc):
         return None
     return {
         "student_id": doc.get("student_id") or doc.get("Student_ID", ""),
-        "first_name": doc.get("first_name") or doc.get("First_Name", ""),
-        "last_name": doc.get("last_name") or doc.get("Last_Name", ""),
-        "middle_name": doc.get("middle_name") or doc.get("Middle_Name", ""),
-        "course": doc.get("course") or doc.get("Course", ""),
-        "section": doc.get("section") or doc.get("Section", ""),
-        "email": doc.get("email") or doc.get("Email", ""),
-        "contact_number": doc.get("contact_number") or doc.get("Contact_Number", ""),
-        "subjects": doc.get("subjects") or doc.get("Subjects", []),
+        "first_name": doc.get("First_Name", ""),
+        "last_name": doc.get("Last_Name", ""),
+        "middle_name": doc.get("Middle_Name", ""),
+        "course": doc.get("Course", ""),
+        "section": doc.get("Section", ""),
+        "email": doc.get("Email", ""),
+        "contact_number": doc.get("Contact_Number", ""),
+        "subjects": doc.get("Subjects", []),
         "created_at": doc.get("created_at"),
         "embeddings": doc.get("embeddings", {})
     }
@@ -123,7 +134,7 @@ def save_attendance_log(student_id, subject_id, timestamp=None, confidence=None)
             "course": student["course"],
             "section": student["section"],
             "subject_id": subject_id,
-            "timestamp": timestamp or datetime.datetime.utcnow(),
+            "timestamp": timestamp or datetime.utcnow(),
             "confidence": confidence,
             "status": "Present"
         }
