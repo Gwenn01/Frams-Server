@@ -19,7 +19,7 @@ CORS(
     app,
     resources={r"/*": {"origins": [
         "http://localhost:5173",               # local React dev
-        "https://your-frontend-domain.com",    # replace with production frontend (if any)
+        "https://face-recognition-attendance-monitor.vercel.app",    # replace with production frontend (if any)
         "https://meuorii-face-recognition-attendance.hf.space"  # allow Hugging Face microservice
     ]}},
     supports_credentials=True,
