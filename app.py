@@ -2,7 +2,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from dotenv import load_dotenv
-import os
+import os, requests
 
 # ----------------------------
 # Load Environment Variables
@@ -18,9 +18,9 @@ app = Flask(__name__)
 CORS(
     app,
     resources={r"/*": {"origins": [
-        "http://localhost:5173",               # local React dev
-        "https://face-recognition-attendance-monitor.vercel.app",    # replace with production frontend (if any)
-        "https://meuorii-face-recognition-attendance.hf.space"  # allow Hugging Face microservice
+        "http://localhost:5173",  # Local dev
+        "https://face-recognition-attendance-monitor.vercel.app",  # ✅ Production frontend
+        "https://meuorii-face-recognition-attendance.hf.space",    # ✅ Hugging Face AI microservice
     ]}},
     supports_credentials=True,
     expose_headers=["Content-Type", "Authorization"],
@@ -48,7 +48,6 @@ from routes.instructor_routes import instructor_bp
 from routes.attendance_routes import attendance_bp
 from routes.face_routes import face_bp
 from routes.admin_routes import admin_bp
-
 
 # Register all blueprints
 app.register_blueprint(auth_bp, url_prefix="/api/auth")
@@ -86,11 +85,37 @@ def server_error(e):
 
 
 # ----------------------------
+# Connectivity Check Logs
+# ----------------------------
+def check_reachability():
+    """Check if Hugging Face Space and Frontend are reachable."""
+    urls = {
+        "Hugging Face Space": "https://meuorii-face-recognition-attendance.hf.space",
+        "Frontend (Vercel)": "https://face-recognition-attendance-monitor.vercel.app",
+    }
+
+    print("\n🌐 Checking external service connectivity...")
+    for name, url in urls.items():
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                print(f"✅ {name} reachable → {url}")
+            else:
+                print(f"⚠️ {name} responded with status {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            print(f"❌ {name} unreachable → {e}")
+    print("---------------------------------------------------\n")
+
+
+# ----------------------------
 # Run App (For Railway)
 # ----------------------------
 if __name__ == "__main__":
+    print("🚀 Starting Flask app...")
+    check_reachability()
     port = int(os.getenv("PORT", 8080))  # ✅ Railway expects port 8080
+    print(f"✅ Backend listening on port {port}")
     app.run(host="0.0.0.0", port=port, debug=False)
 
-# ✅ Expose WSGI app for production (Gunicorn)
+# ✅ Expose WSGI app for Gunicorn
 application = app
