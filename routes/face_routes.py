@@ -163,10 +163,10 @@ def face_login():
             "token": token,
             "student": {
                 "student_id": student.get("student_id", ""),
-                "first_name": student.get("first_name", ""),
-                "last_name": student.get("last_name", ""),
-                "course": student.get("course", ""),
-                "section": student.get("section", "")
+                "First_name": student.get("First_name", ""),
+                "Last_name": student.get("Last_name", ""),
+                "Course": student.get("Course", ""),
+                "Section": student.get("Section", "")
             },
             "match_score": hf_result.get("match_score"),
             "anti_spoof_confidence": hf_result.get("anti_spoof_confidence"),
