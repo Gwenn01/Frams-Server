@@ -43,14 +43,26 @@ def register_auto():
         # ✅ Success and embedding received
         if hf_result.get("success") and hf_result.get("embeddings"):
             angle_embeddings = hf_result["embeddings"]
-            created_at = hf_result.get("created_at") or datetime.utcnow().isoformat()
+            created_at = hf_result.get("created_at") or datetime.utcnow()
 
-            # 🔍 Fetch full student profile info from DB
-            student_doc = students_collection.find_one({"student_id": student_id}) or {}
+            # 🔍 Fetch or create student record
+            student_doc = students_collection.find_one({"student_id": student_id})
             if not student_doc:
-                print(f"⚠️ No existing record found for {student_id}. Creating new one.")
+                students_collection.insert_one({
+                    "student_id": student_id,
+                    "First_Name": data.get("First_Name"),
+                    "Last_Name": data.get("Last_Name"),
+                    "Course": data.get("Course"),
+                    "Email": data.get("Email"),
+                    "Contact_Number": data.get("Contact_Number"),
+                    "Subjects": data.get("Subjects", []),
+                    "created_at": created_at,
+                    "registered": False
+                })
+                print(f"🆕 Created new record for {student_id}")
+                student_doc = students_collection.find_one({"student_id": student_id})
 
-            # 🧠 Build full update payload
+            # 🧠 Build update payload
             update_fields = {
                 "student_id": student_id,
                 "First_Name": student_doc.get("First_Name", data.get("First_Name")),
@@ -76,6 +88,9 @@ def register_auto():
 
         return jsonify(hf_result), 200
 
+    except requests.exceptions.Timeout:
+        print("⏱️ Timeout contacting Hugging Face service.")
+        return jsonify({"success": False, "error": "AI service timeout"}), 504
     except Exception as e:
         import traceback
         print("❌ /register-auto error:", str(e))
