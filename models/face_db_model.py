@@ -14,20 +14,39 @@ def save_face_data(student_id, update_fields):
             print("❌ Missing student_id or update_fields.")
             return False
 
-        # Always normalize to lowercase field name
+        # 🧠 Split embeddings from other student info
+        embeddings = update_fields.pop("embeddings", None)
+
+        # ✅ Prepare set operations for general info (like name, course, etc.)
+        set_ops = {
+            "student_id": student_id,  # ensure always included
+            **update_fields
+        }
+
+        # ✅ Prepare embedding fields (merge per angle)
+        if embeddings and isinstance(embeddings, dict):
+            for angle, vector in embeddings.items():
+                set_ops[f"embeddings.{angle}"] = vector
+
+        # ✅ Final update operation
+        update_ops = {
+            "$set": set_ops,
+            "$setOnInsert": {"created_at": datetime.utcnow()}  # set created_at once
+        }
+
         result = students_collection.update_one(
             {"student_id": student_id},
-            {"$set": update_fields},
+            update_ops,
             upsert=True
         )
 
-        updated_fields = [k for k in update_fields.keys() if k.startswith("embeddings.")]
-        print(f"✅ Face data updated for {student_id}. Fields updated: {updated_fields}")
+        updated_angles = list(embeddings.keys()) if embeddings else []
+        print(f"✅ Face data saved for {student_id}. Updated angles: {updated_angles}")
         return True
+
     except Exception as e:
         print("❌ MongoDB save error:", str(e))
         return False
-
 
 # -----------------------------
 # Normalize student document

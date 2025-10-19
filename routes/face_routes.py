@@ -22,7 +22,7 @@ HF_AI_URL = "https://meuorii-face-recognition-attendance.hf.space"
 # ---------------------------
 @face_bp.route("/register-auto", methods=["POST"])
 def register_auto():
-    """Forward face registration to Hugging Face AI service"""
+    """Forward face registration to Hugging Face AI service and merge embeddings per angle."""
     try:
         data = request.get_json(silent=True) or {}
         student_id = data.get("student_id")
@@ -30,22 +30,45 @@ def register_auto():
         if not student_id or not data.get("image"):
             return jsonify({"success": False, "error": "Missing student_id or image"}), 400
 
-        # 🔗 Forward request to Hugging Face Space
+        # 🔗 Forward to Hugging Face Space
         res = requests.post(f"{HF_AI_URL}/register-auto", json=data, timeout=60)
         if res.status_code != 200:
             return jsonify({"success": False, "error": "Hugging Face service error"}), res.status_code
 
         hf_result = res.json()
 
-        # 🧠 Update DB if success and embeddings exist
+        # ✅ Success and embedding received
         if hf_result.get("success") and hf_result.get("embeddings"):
-            save_face_data(student_id, {
+            angle_embeddings = hf_result["embeddings"]
+            created_at = hf_result.get("created_at") or datetime.utcnow()
+
+            # 🔍 Fetch full student profile info from DB
+            student_doc = students_collection.find_one({"student_id": student_id})
+            if not student_doc:
+                print(f"⚠️ No existing record found for {student_id}. Creating new one.")
+                student_doc = {}
+
+            # 🧠 Build full update payload
+            update_fields = {
+                "student_id": student_id,
+                "First_Name": student_doc.get("First_Name", data.get("First_Name")),
+                "Last_Name": student_doc.get("Last_Name", data.get("Last_Name")),
+                "Course": student_doc.get("Course", data.get("Course")),
+                "Email": student_doc.get("Email", data.get("Email")),
+                "Contact_Number": student_doc.get("Contact_Number", data.get("Contact_Number")),
+                "Subjects": student_doc.get("Subjects", data.get("Subjects")),
+                "created_at": student_doc.get("created_at", created_at),
                 "registered": True,
-                "embeddings": hf_result["embeddings"]
-            })
-            print(f"✅ Saved embeddings for {student_id}")
+                "embeddings": angle_embeddings
+            }
+
+            # 💾 Save to DB
+            save_face_data(student_id, update_fields)
+            print(f"✅ Saved embeddings and student info for {student_id} → {list(angle_embeddings.keys())}")
+
         else:
-            print(f"⚠️ No embeddings found for {student_id} or registration failed")
+            print(f"⚠️ Registration failed or no embeddings returned for {student_id}")
+            return jsonify({"success": False, "error": "No embeddings found"}), 400
 
         return jsonify(hf_result), 200
 
