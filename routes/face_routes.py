@@ -24,7 +24,6 @@ students_collection = db["students"]
 # ---------------------------
 @face_bp.route("/register-auto", methods=["POST"])
 def register_auto():
-    """Forward face registration to Hugging Face AI service and merge embeddings per angle."""
     try:
         data = request.get_json(silent=True) or {}
         student_id = data.get("student_id")
@@ -40,10 +39,8 @@ def register_auto():
 
         hf_result = res.json()
 
-        # ✅ Success and embedding received
         if hf_result.get("success") and hf_result.get("embeddings"):
             angle_embeddings = hf_result["embeddings"]
-            created_at = hf_result.get("created_at") or datetime.utcnow()
 
             # 🔍 Fetch or create student record
             student_doc = students_collection.find_one({"student_id": student_id})
@@ -56,8 +53,8 @@ def register_auto():
                     "Email": data.get("Email"),
                     "Contact_Number": data.get("Contact_Number"),
                     "Subjects": data.get("Subjects", []),
-                    "created_at": created_at,
-                    "registered": False
+                    "registered": False,
+                    "created_at": datetime.utcnow()
                 })
                 print(f"🆕 Created new record for {student_id}")
                 student_doc = students_collection.find_one({"student_id": student_id})
@@ -71,7 +68,6 @@ def register_auto():
                 "Email": student_doc.get("Email", data.get("Email")),
                 "Contact_Number": student_doc.get("Contact_Number", data.get("Contact_Number")),
                 "Subjects": student_doc.get("Subjects", data.get("Subjects")),
-                "created_at": student_doc.get("created_at", created_at),
                 "registered": True,
                 "embeddings": angle_embeddings
             }
@@ -96,6 +92,7 @@ def register_auto():
         print("❌ /register-auto error:", str(e))
         print(traceback.format_exc())
         return jsonify({"success": False, "error": f"Internal server error: {str(e)}"}), 500
+
 
 # ---------------------------
 # Face Login (via Hugging Face)

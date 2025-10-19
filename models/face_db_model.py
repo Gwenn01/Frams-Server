@@ -17,7 +17,7 @@ def save_face_data(student_id, update_fields):
         # 🧠 Extract embeddings separately
         embeddings = update_fields.pop("embeddings", None)
 
-        # ✅ Prepare general student info (ensure capitalization)
+        # ✅ Prepare general student info
         set_ops = {
             "student_id": student_id,
             "First_Name": update_fields.get("First_Name"),
@@ -26,11 +26,10 @@ def save_face_data(student_id, update_fields):
             "Email": update_fields.get("Email"),
             "Contact_Number": update_fields.get("Contact_Number"),
             "Subjects": update_fields.get("Subjects", []),
-            "created_at": update_fields.get("created_at", datetime.utcnow()),
             "registered": True
         }
 
-        # ✅ Merge embeddings per angle (e.g., embeddings.front, embeddings.left, etc.)
+        # ✅ Merge embeddings per angle
         if embeddings and isinstance(embeddings, dict):
             for angle, vector in embeddings.items():
                 if vector and isinstance(vector, list):
