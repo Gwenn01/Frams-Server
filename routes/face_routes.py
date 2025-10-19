@@ -37,9 +37,15 @@ def register_auto():
 
         hf_result = res.json()
 
-        # 🧠 Update DB if success
-        if hf_result.get("success"):
-            save_face_data(student_id, {"registered": True})
+        # 🧠 Update DB if success and embeddings exist
+        if hf_result.get("success") and hf_result.get("embeddings"):
+            save_face_data(student_id, {
+                "registered": True,
+                "embeddings": hf_result["embeddings"]
+            })
+            print(f"✅ Saved embeddings for {student_id}")
+        else:
+            print(f"⚠️ No embeddings found for {student_id} or registration failed")
 
         return jsonify(hf_result), 200
 
@@ -47,26 +53,52 @@ def register_auto():
         print("❌ /register-auto error:", str(e))
         return jsonify({"success": False, "error": "Internal server error"}), 500
 
-
 # ---------------------------
 # Face Login (via Hugging Face)
 # ---------------------------
 @face_bp.route("/login", methods=["POST"])
 def face_login():
-    """Forward face login to Hugging Face AI service"""
+    """Perform face login using Hugging Face AI model"""
     try:
         data = request.get_json(silent=True) or {}
         base64_image = data.get("image")
         if not base64_image:
             return jsonify({"error": "Missing image"}), 400
 
-        # 🔗 Forward to Hugging Face
-        res = requests.post(f"{HF_AI_URL}/recognize", json=data, timeout=60)
+        # 🧠 Load all registered embeddings from MongoDB
+        from models.face_db_model import load_registered_faces
+        registered_faces = []
+        all_students = load_registered_faces()
+
+        for s in all_students:
+            student_id = s.get("student_id")
+            embeddings = s.get("embeddings", {})
+            for angle, vector in embeddings.items():
+                if vector and isinstance(vector, list):
+                    registered_faces.append({
+                        "user_id": student_id,
+                        "embedding": vector,
+                        "angle": angle
+                    })
+
+        if not registered_faces:
+            print("⚠️ No registered faces found in DB.")
+            return jsonify({"error": "No registered faces found"}), 400
+
+        # 🔗 Forward to Hugging Face with both image + embeddings
+        payload = {
+            "image": base64_image,
+            "registered_faces": registered_faces
+        }
+
+        res = requests.post(f"{HF_AI_URL}/recognize", json=payload, timeout=90)
         if res.status_code != 200:
             return jsonify({"error": "Hugging Face service error"}), res.status_code
 
         hf_result = res.json()
-        if hf_result.get("error"):
+
+        # ⚠️ If recognition failed
+        if not hf_result.get("success"):
             return jsonify(hf_result), 400
 
         # ✅ Successful match → fetch from DB
@@ -77,6 +109,7 @@ def face_login():
 
         student = normalize_student(raw_student)
 
+        # 🎟️ Generate token
         token = create_access_token(
             identity=student.get("student_id"),
             expires_delta=timedelta(hours=12)
@@ -89,7 +122,7 @@ def face_login():
                 "first_name": student.get("first_name", ""),
                 "last_name": student.get("last_name", ""),
                 "course": student.get("course", ""),
-                "section": student.get("section", ""),
+                "section": student.get("section", "")
             },
             "match_score": hf_result.get("match_score"),
             "anti_spoof_confidence": hf_result.get("anti_spoof_confidence"),
@@ -98,3 +131,18 @@ def face_login():
     except Exception as e:
         print("❌ /login error:", str(e))
         return jsonify({"error": "Internal server error"}), 500
+
+@face_bp.route("/get_registered_faces", methods=["GET"])
+def get_registered_faces():
+    """Return all students that have stored embeddings"""
+    try:
+        from models.face_db_model import load_registered_faces
+        faces = load_registered_faces()
+
+        if not faces:
+            return jsonify([]), 200  # no faces yet is not an error
+
+        return jsonify(faces), 200
+    except Exception as e:
+        print("❌ /get_registered_faces error:", str(e))
+        return jsonify({"error": "Failed to load registered faces"}), 500
