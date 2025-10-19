@@ -438,7 +438,7 @@ def create_subject():
         "course": data["course"],
         "year_level": data["year_level"],
         "semester": data["semester"],
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.datetime.utcnow(),
     }
 
     result = subjects_col.insert_one(subject_doc)
