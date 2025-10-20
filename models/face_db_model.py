@@ -66,14 +66,14 @@ def normalize_student(doc):
         return None
     return {
         "student_id": doc.get("student_id") or doc.get("Student_ID", ""),
-        "first_name": doc.get("First_Name", ""),
-        "last_name": doc.get("Last_Name", ""),
-        "middle_name": doc.get("Middle_Name", ""),
-        "course": doc.get("Course", ""),
-        "section": doc.get("Section", ""),
-        "email": doc.get("Email", ""),
-        "contact_number": doc.get("Contact_Number", ""),
-        "subjects": doc.get("Subjects", []),
+        "first_name": doc.get("first_name") or doc.get("First_Name", ""),
+        "last_name": doc.get("last_name") or doc.get("Last_Name", ""),
+        "middle_name": doc.get("middle_name") or doc.get("Middle_Name", ""),
+        "course": doc.get("course") or doc.get("Course", ""),
+        "section": doc.get("section") or doc.get("Section", ""),
+        "email": doc.get("email") or doc.get("Email", ""),
+        "contact_number": doc.get("contact_number") or doc.get("Contact_Number", ""),
+        "subjects": doc.get("subjects") or doc.get("Subjects", []),
         "created_at": doc.get("created_at"),
         "embeddings": doc.get("embeddings", {})
     }

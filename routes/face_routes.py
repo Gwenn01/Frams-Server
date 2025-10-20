@@ -32,7 +32,7 @@ def register_auto():
             return jsonify({"success": False, "error": "Missing student_id or image"}), 400
 
         # 🔗 Forward to Hugging Face Space
-        res = requests.post(f"{HF_AI_URL}/register-auto", json=data, timeout=60)
+        res = requests.post(f"{HF_AI_URL}/register-auto", json=data, timeout=120)
         if res.status_code != 200:
             print(f"⚠️ HF service returned {res.status_code}: {res.text}")
             return jsonify({"success": False, "error": "Hugging Face service error"}), res.status_code
@@ -160,10 +160,10 @@ def face_login():
             "token": token,
             "student": {
                 "student_id": student.get("student_id", ""),
-                "First_name": student.get("First_name", ""),
-                "Last_name": student.get("Last_name", ""),
-                "Course": student.get("Course", ""),
-                "Section": student.get("Section", "")
+                "first_name": student.get("first_name", ""),
+                "last_name": student.get("last_name", ""),
+                "course": student.get("course", ""),
+                "section": student.get("section", "")
             },
             "match_score": hf_result.get("match_score"),
             "anti_spoof_confidence": hf_result.get("anti_spoof_confidence"),
