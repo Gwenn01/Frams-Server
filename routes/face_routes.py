@@ -39,10 +39,10 @@ def register_auto():
 
         hf_result = res.json()
 
+        # ✅ Normal success flow
         if hf_result.get("success") and hf_result.get("embeddings"):
             angle_embeddings = hf_result["embeddings"]
 
-            # 🔍 Fetch or create student record
             student_doc = students_collection.find_one({"student_id": student_id})
             if not student_doc:
                 students_collection.insert_one({
@@ -59,7 +59,6 @@ def register_auto():
                 print(f"🆕 Created new record for {student_id}")
                 student_doc = students_collection.find_one({"student_id": student_id})
 
-            # 🧠 Build update payload
             update_fields = {
                 "student_id": student_id,
                 "First_Name": student_doc.get("First_Name", data.get("First_Name")),
@@ -72,27 +71,31 @@ def register_auto():
                 "embeddings": angle_embeddings
             }
 
-            # 💾 Save to DB
             if save_face_data(student_id, update_fields):
-                print(f"✅ Saved embeddings and student info for {student_id} → {list(angle_embeddings.keys())}")
+                print(f"✅ Saved embeddings for {student_id} → {list(angle_embeddings.keys())}")
             else:
                 print(f"⚠️ Failed to save embeddings for {student_id}")
 
+        # 🟡 FIXED: handle warnings gracefully instead of breaking with 400
         else:
-            print(f"⚠️ Registration failed or no embeddings returned for {student_id}")
-            return jsonify({"success": False, "error": "No embeddings found"}), 400
+            warning_msg = hf_result.get("warning") or hf_result.get("error") or "No embeddings returned"
+            print(f"⚠️ HF warning for {student_id}: {warning_msg}")
+            return jsonify({
+                "success": False,
+                "warning": warning_msg,
+                "angle": hf_result.get("angle", "unknown")
+            }), 200
 
         return jsonify(hf_result), 200
 
     except requests.exceptions.Timeout:
-        print("⏱️ Timeout contacting Hugging Face service.")
+        print("⏱️ Timeout contacting Hugging Face.")
         return jsonify({"success": False, "error": "AI service timeout"}), 504
     except Exception as e:
         import traceback
         print("❌ /register-auto error:", str(e))
         print(traceback.format_exc())
         return jsonify({"success": False, "error": f"Internal server error: {str(e)}"}), 500
-
 
 # ---------------------------
 # Face Login (via Hugging Face)
