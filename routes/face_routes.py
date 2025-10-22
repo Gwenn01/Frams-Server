@@ -73,13 +73,15 @@ def register_auto():
 
             # 🔄 Update with new normalized embeddings
             update_fields = {
-                 "student_id": student_id,
-                "First_Name": student_doc.get("First_Name", data.get("First_Name")),
-                "Last_Name": student_doc.get("Last_Name", data.get("Last_Name")),
-                "Course": student_doc.get("Course", data.get("Course")),
-                "Email": student_doc.get("Email", data.get("Email")),
-                "Contact_Number": student_doc.get("Contact_Number", data.get("Contact_Number")),
-                "Subjects": student_doc.get("Subjects", data.get("Subjects")),
+                "student_id": student_id,
+                "First_Name": data.get("First_Name") or student_doc.get("First_Name"),
+                "Last_Name": data.get("Last_Name") or student_doc.get("Last_Name"),
+                "Middle_Name": data.get("Middle_Name") or student_doc.get("Middle_Name"),
+                "Course": data.get("Course") or student_doc.get("Course"),
+                "Email": data.get("Email") or student_doc.get("Email"),
+                "Contact_Number": data.get("Contact_Number") or student_doc.get("Contact_Number"),
+                "Subjects": data.get("Subjects") or student_doc.get("Subjects"),
+                "Section": data.get("Section") or student_doc.get("Section"),
                 "registered": True,
                 "embeddings": normalized_embeddings,
             }
