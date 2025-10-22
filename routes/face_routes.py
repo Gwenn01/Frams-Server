@@ -33,7 +33,7 @@ def register_auto():
             return jsonify({"success": False, "error": "Missing student_id or image"}), 400
 
         # 🔗 Send image to Hugging Face for embedding extraction
-        res = requests.post(f"{HF_AI_URL}/register-auto", json=data, timeout=60)
+        res = requests.post(f"{HF_AI_URL}/register-auto", json=data, timeout=120)
         if res.status_code != 200:
             print(f"⚠️ HF service returned {res.status_code}: {res.text}")
             return jsonify({"success": False, "error": "Hugging Face service error"}), res.status_code
@@ -59,12 +59,12 @@ def register_auto():
             if not student_doc:
                 students_collection.insert_one({
                     "student_id": student_id,
-                    "first_name": data.get("First_Name"),
-                    "last_name": data.get("Last_Name"),
-                    "course": data.get("Course"),
-                    "email": data.get("Email"),
-                    "contact_number": data.get("Contact_Number"),
-                    "subjects": data.get("Subjects", []),
+                    "First_Name": data.get("First_Name"),
+                    "Last_Name": data.get("Last_Name"),
+                    "Course": data.get("Course"),
+                    "Email": data.get("Email"),
+                    "Contact_Number": data.get("Contact_Number"),
+                    "Subjects": data.get("Subjects", []),
                     "registered": False,
                     "created_at": datetime.utcnow()
                 })
@@ -74,12 +74,12 @@ def register_auto():
             # 🔄 Update with new normalized embeddings
             update_fields = {
                 "student_id": student_id,
-                "first_name": student_doc.get("first_name", data.get("First_Name")),
-                "last_name": student_doc.get("last_name", data.get("Last_Name")),
-                "course": student_doc.get("course", data.get("Course")),
-                "email": student_doc.get("email", data.get("Email")),
-                "contact_number": student_doc.get("contact_number", data.get("Contact_Number")),
-                "subjects": student_doc.get("subjects", data.get("Subjects")),
+                "First_Name": student_doc.get("First_Name", data.get("First_Name")),
+                "Last_Name": student_doc.get("Last_Name", data.get("Last_Name")),
+                "Course": student_doc.get("Course", data.get("Course")),
+                "Email": student_doc.get("Email", data.get("Email")),
+                "Contact_Number": student_doc.get("Contact_Number", data.get("Contact_Number")),
+                "Subjects": student_doc.get("Subjects", data.get("Subjects")),
                 "registered": True,
                 "embeddings": normalized_embeddings,
                 "updated_at": datetime.utcnow()
@@ -149,7 +149,7 @@ def face_login():
             "registered_faces": registered_faces
         }
 
-        res = requests.post(f"{HF_AI_URL}/recognize", json=payload, timeout=30)
+        res = requests.post(f"{HF_AI_URL}/recognize", json=payload, timeout=90)
         if res.status_code != 200:
             print(f"❌ HF recognize error {res.status_code}: {res.text}")
             return jsonify({"error": "Hugging Face service error"}), res.status_code
