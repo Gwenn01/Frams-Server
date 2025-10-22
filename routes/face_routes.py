@@ -73,7 +73,7 @@ def register_auto():
 
             # 🔄 Update with new normalized embeddings
             update_fields = {
-                "student_id": student_id,
+                 "student_id": student_id,
                 "First_Name": student_doc.get("First_Name", data.get("First_Name")),
                 "Last_Name": student_doc.get("Last_Name", data.get("Last_Name")),
                 "Course": student_doc.get("Course", data.get("Course")),
@@ -82,7 +82,6 @@ def register_auto():
                 "Subjects": student_doc.get("Subjects", data.get("Subjects")),
                 "registered": True,
                 "embeddings": normalized_embeddings,
-                "updated_at": datetime.utcnow()
             }
 
             if save_face_data(student_id, update_fields):
