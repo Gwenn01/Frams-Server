@@ -129,8 +129,17 @@ def face_login():
         registered_faces = []
         all_students = load_registered_faces()
 
+        excluded_ids = ["23-1-1-0520", "22-1-1-0558", "21-1-1-0758"]  # Replace with correct IDs
+        print(f"🧩 Excluding these student IDs from recognition: {excluded_ids}")
+
         for s in all_students:
             student_id = s.get("student_id")
+
+            # Skip excluded IDs
+            if student_id in excluded_ids:
+                print(f"⏭️ Skipping excluded student ID: {student_id}")
+                continue
+
             embeddings = s.get("embeddings", {})
             for angle, vector in embeddings.items():
                 if vector and isinstance(vector, list):
@@ -141,10 +150,10 @@ def face_login():
                     })
 
         if not registered_faces:
-            print("⚠️ No registered faces found in DB.")
+            print("⚠️ No registered faces found in DB after filtering.")
             return jsonify({"error": "No registered faces found"}), 400
 
-        # 🔗 Send image + embeddings to Hugging Face
+        # 🔗 Send image + embeddings to Hugging Face AI microservice
         payload = {
             "image": base64_image,
             "registered_faces": registered_faces
@@ -175,13 +184,17 @@ def face_login():
 
         student = normalize_student(raw_student)
 
-        # 🎟️ Generate token
+        # 🎟️ Generate JWT token (12-hour validity)
         token = create_access_token(
             identity=student.get("student_id"),
             expires_delta=timedelta(hours=12)
         )
 
-        print(f"✅ Face matched: {student_id} | Score={hf_result.get('match_score'):.4f} | AntiSpoof={hf_result.get('anti_spoof_confidence'):.2f}")
+        print(
+            f"✅ Face matched: {student_id} | "
+            f"Score={hf_result.get('match_score'):.4f} | "
+            f"AntiSpoof={hf_result.get('anti_spoof_confidence'):.2f}"
+        )
 
         return jsonify({
             "token": token,
