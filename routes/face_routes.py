@@ -129,7 +129,7 @@ def face_login():
         registered_faces = []
         all_students = load_registered_faces()
 
-        excluded_ids = ["23-1-1-0520", "22-1-1-0558", "21-1-1-0758"]  # Replace with correct IDs
+        excluded_ids = ["23-1-1-0520", "22-1-1-0558", "23-1-1-0052"]  # Replace with correct IDs
         print(f"🧩 Excluding these student IDs from recognition: {excluded_ids}")
 
         for s in all_students:
