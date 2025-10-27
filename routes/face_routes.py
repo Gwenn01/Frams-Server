@@ -259,7 +259,7 @@ def face_login():
 # ============================================================
 # 🌐 PUBLIC API (for Attendance App)
 # ============================================================
-@face_bp.route("/api/faces", methods=["GET"])
+@face_bp.route("/faces", methods=["GET"])
 def get_all_faces():
     """Return all registered student embeddings from students collection."""
     try:
@@ -289,7 +289,7 @@ def get_all_faces():
 
 
 
-@face_bp.route("/api/student/<student_id>", methods=["GET"])
+@face_bp.route("/student/<student_id>", methods=["GET"])
 def get_student(student_id):
     """Return specific student by ID."""
     student = get_student_by_id(student_id)
