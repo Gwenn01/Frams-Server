@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from datetime import datetime, timedelta
 import requests
 import numpy as np
@@ -20,6 +20,17 @@ limiter = Limiter(key_func=get_remote_address, default_limits=[])
 HF_AI_URL = "https://meuorii-face-recognition-attendance.hf.space"
 students_collection = db["students"]
 
+def cache_registered_faces():
+    """Cache all registered embeddings in memory for faster login."""
+    all_students = load_registered_faces()
+    current_app.config["CACHED_FACES"] = [
+        {"user_id": s["student_id"], "embedding": vec, "angle": angle}
+        for s in all_students
+        for angle, vec in s.get("embeddings", {}).items()
+        if isinstance(vec, list) and vec
+    ]
+    print(f"🧠 Cached {len(current_app.config['CACHED_FACES'])} embeddings in memory.")
+    
 # ============================================================
 # 🧠 REGISTER FACE (Hugging Face)
 # ============================================================
@@ -141,40 +152,55 @@ def register_auto():
 # ============================================================
 @face_bp.route("/login", methods=["POST"])
 def face_login():
-    """Authenticate student using Hugging Face recognition API."""
+    """Authenticate student using Hugging Face recognition API (cached + faster)."""
+    import time
+    start_time = time.time()
+
     try:
         data = request.get_json(silent=True) or {}
         base64_image = data.get("image")
         if not base64_image:
             return jsonify({"error": "Missing image"}), 400
 
-        registered_faces = []
-        all_students = load_registered_faces()
-
-        # Excluded student IDs (for testing or safety)
-        excluded_ids = ["23-1-1-0520", "22-1-1-0558", "23-1-1-0052"]
-        print(f"🧩 Excluding student IDs: {excluded_ids}")
-
-        for s in all_students:
-            sid = s.get("student_id")
-            if sid in excluded_ids:
-                continue
-            embeddings = s.get("embeddings", {})
-            for angle, vector in embeddings.items():
-                if isinstance(vector, list) and vector:
-                    registered_faces.append({
-                        "user_id": sid,
-                        "embedding": vector,
-                        "angle": angle
-                    })
+        # =====================================================
+        # 🧠 Use in-memory cache of embeddings if available
+        # =====================================================
+        registered_faces = current_app.config.get("CACHED_FACES")
 
         if not registered_faces:
-            print("⚠️ No registered faces found in DB after filtering.")
+            print("⚠️ No cached faces found — loading from MongoDB...")
+            load_start = time.time()
+            all_students = load_registered_faces()
+            registered_faces = [
+                {"user_id": s["student_id"], "embedding": vec, "angle": angle}
+                for s in all_students
+                for angle, vec in s.get("embeddings", {}).items()
+                if isinstance(vec, list) and vec
+            ]
+            current_app.config["CACHED_FACES"] = registered_faces
+            print(f"🧠 Cached {len(registered_faces)} embeddings "
+                  f"in {time.time() - load_start:.2f}s")
+
+        # =====================================================
+        # 🚫 Exclude testing IDs
+        # =====================================================
+        excluded_ids = {"23-1-1-0520", "22-1-1-0558", "23-1-1-0052"}
+        filtered_faces = [f for f in registered_faces if f["user_id"] not in excluded_ids]
+
+        if not filtered_faces:
             return jsonify({"error": "No registered faces found"}), 400
 
+        # =====================================================
         # 🔗 Send image + embeddings to Hugging Face
-        payload = {"image": base64_image, "registered_faces": registered_faces}
-        res = requests.post(f"{HF_AI_URL}/recognize", json=payload, timeout=90)
+        # =====================================================
+        payload = {"image": base64_image, "registered_faces": filtered_faces}
+
+        hf_start = time.time()
+        res = requests.post(f"{HF_AI_URL}/recognize", json=payload, timeout=60)
+        hf_elapsed = time.time() - hf_start
+        print(f"⏱️ HF recognize latency = {hf_elapsed:.2f}s "
+              f"for {len(filtered_faces)} embeddings")
+
         if res.status_code != 200:
             return jsonify({"error": "Hugging Face service error"}), res.status_code
 
@@ -182,6 +208,7 @@ def face_login():
 
         # 🚫 Recognition failed
         if not hf_result.get("success"):
+            print(f"🚫 Recognition failed: {hf_result.get('error', 'Unknown')}")
             return jsonify({
                 "error": hf_result.get("error", "Face not recognized"),
                 "match_score": hf_result.get("match_score"),
@@ -202,7 +229,10 @@ def face_login():
             expires_delta=timedelta(hours=12)
         )
 
-        print(f"✅ Match: {sid} | Score={hf_result.get('match_score'):.4f} | AntiSpoof={hf_result.get('anti_spoof_confidence'):.2f}")
+        total_elapsed = time.time() - start_time
+        print(f"✅ Match: {sid} | Score={hf_result.get('match_score'):.4f} | "
+              f"AntiSpoof={hf_result.get('anti_spoof_confidence'):.2f} "
+              f"| Total={total_elapsed:.2f}s")
 
         return jsonify({
             "token": token,
@@ -217,11 +247,14 @@ def face_login():
             "anti_spoof_confidence": hf_result.get("anti_spoof_confidence"),
         }), 200
 
+    except requests.exceptions.Timeout:
+        print("⏱️ Timeout contacting Hugging Face.")
+        return jsonify({"error": "AI service timeout"}), 504
     except Exception as e:
         import traceback
+        print("❌ /login error:", str(e))
         print(traceback.format_exc())
-        return jsonify({"error": str(e)}), 500
-
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 # ============================================================
 # 🌐 PUBLIC API (for Attendance App)

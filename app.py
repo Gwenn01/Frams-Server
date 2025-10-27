@@ -48,6 +48,7 @@ from routes.instructor_routes import instructor_bp
 from routes.attendance_routes import attendance_bp
 from routes.face_routes import face_bp
 from routes.admin_routes import admin_bp
+from routes.face_routes import cache_registered_faces
 
 # Register all blueprints
 app.register_blueprint(auth_bp, url_prefix="/api/auth")
@@ -83,6 +84,9 @@ def not_found(_):
 def server_error(e):
     return jsonify(error="Server error", detail=str(e)), 500
 
+@app.before_first_request
+def preload_embeddings():
+    cache_registered_faces()
 
 # ----------------------------
 # Connectivity Check Logs
