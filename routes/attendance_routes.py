@@ -138,39 +138,61 @@ def stop_session():
         print("❌ Error in /stop-session:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
 
-# ✅ Get currently active session (with safety checks)
+
+# ✅ Get currently active session (with auto-detect fallback)
 @attendance_bp.route("/active-session", methods=["GET"])
 def get_active_session():
     try:
-        # 🔹 Require instructor_id parameter
+        # 🔹 Optional instructor_id parameter
         instructor_id = request.args.get("instructor_id")
-        if not instructor_id:
-            print("⚠️ Missing instructor_id in request.")
-            return jsonify({
-                "active": False,
-                "error": "Missing instructor_id"
-            }), 400
 
-        # 🔹 Query only for that instructor’s active session
-        cls = classes_collection.find_one({
-            "is_attendance_active": True,
-            "instructor_id": instructor_id
-        })
+        # -------------------------------------------------
+        # 🧩 Case 1: instructor_id is provided (normal flow)
+        # -------------------------------------------------
+        if instructor_id:
+            cls = classes_collection.find_one({
+                "is_attendance_active": True,
+                "instructor_id": instructor_id
+            })
+
+            if cls:
+                print(f"🟢 Active session found for instructor {instructor_id}: {cls.get('_id')}")
+                return jsonify({
+                    "active": True,
+                    "class": _class_to_payload(cls),
+                    "instructor_id": instructor_id
+                }), 200
+
+            print(f"🟡 No active session for instructor {instructor_id}")
+            return jsonify({"active": False}), 200
+
+        # -------------------------------------------------
+        # 🧭 Case 2: No instructor_id → Fallback auto-detect
+        # -------------------------------------------------
+        print("⚠️ Missing instructor_id in request (auto-detect mode).")
+
+        # Look for any active session in database
+        cls = classes_collection.find_one({"is_attendance_active": True})
 
         if cls:
-            print(f"🟢 Active session found for instructor {instructor_id}: {cls.get('_id')}")
+            print(f"🟢 Fallback active session found: {cls.get('_id')} | Instructor={cls.get('instructor_id')}")
             return jsonify({
                 "active": True,
-                "class": _class_to_payload(cls)
+                "class": _class_to_payload(cls),
+                "instructor_id": cls.get("instructor_id")
             }), 200
 
-        print(f"🟡 No active session for instructor {instructor_id}")
-        return jsonify({"active": False}), 200
+        print("🟡 No active sessions found (auto-detect mode).")
+        return jsonify({
+            "active": False,
+            "error": "No active sessions found"
+        }), 200
 
     except Exception:
         import traceback
         print("❌ Error in /active-session:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
+
 
 
 # ✅ Log/Upsert a student's attendance
