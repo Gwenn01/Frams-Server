@@ -261,9 +261,32 @@ def face_login():
 # ============================================================
 @face_bp.route("/api/faces", methods=["GET"])
 def get_all_faces():
-    """Return all registered student embeddings."""
-    faces = load_registered_faces()
-    return jsonify(faces or []), 200
+    """Return all registered student embeddings from students collection."""
+    try:
+        students_collection = db["students"]
+        faces = []
+
+        # 🔍 Find only students that have embeddings
+        for s in students_collection.find({"embeddings": {"$exists": True, "$ne": {}}}):
+            faces.append({
+                "student_id": s.get("student_id"),
+                "first_name": s.get("first_name") or s.get("First_Name"),
+                "last_name": s.get("last_name") or s.get("Last_Name"),
+                "embeddings": s.get("embeddings", {})
+            })
+
+        if not faces:
+            print("⚠️ No registered student embeddings found in database.")
+            return jsonify({"error": "No registered student embeddings found"}), 404
+
+        print(f"✅ Loaded {len(faces)} registered student embeddings.")
+        return jsonify(faces), 200
+
+    except Exception as e:
+        import traceback
+        print("❌ Error in /api/faces:", traceback.format_exc())
+        return jsonify({"error": "Internal server error"}), 500
+
 
 
 @face_bp.route("/api/student/<student_id>", methods=["GET"])
