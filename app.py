@@ -46,9 +46,8 @@ from routes.auth_routes import auth_bp
 from routes.student_routes import student_bp
 from routes.instructor_routes import instructor_bp
 from routes.attendance_routes import attendance_bp
-from routes.face_routes import face_bp
+from routes.face_routes import face_bp, cache_registered_faces
 from routes.admin_routes import admin_bp
-from routes.face_routes import cache_registered_faces
 
 # Register all blueprints
 app.register_blueprint(auth_bp, url_prefix="/api/auth")
@@ -70,7 +69,7 @@ def home():
     }), 200
 
 
-@app.route("/healthz")
+@app.route("/healthz", methods=["GET"])
 def healthz():
     return jsonify(status="healthy"), 200
 
@@ -84,9 +83,20 @@ def not_found(_):
 def server_error(e):
     return jsonify(error="Server error", detail=str(e)), 500
 
-@app.before_first_request
+
+# ----------------------------
+# 🧠 Preload Cached Embeddings (Flask 3.x Safe)
+# ----------------------------
+@app.before_serving
 def preload_embeddings():
-    cache_registered_faces()
+    """Run once before serving the first request — cache face embeddings in memory."""
+    print("🧠 Preloading face embeddings into memory...")
+    try:
+        cache_registered_faces()
+        print("✅ Embeddings cached successfully!")
+    except Exception as e:
+        print(f"⚠️ Failed to preload embeddings: {e}")
+
 
 # ----------------------------
 # Connectivity Check Logs
@@ -121,6 +131,5 @@ if __name__ == "__main__":
     print(f"✅ Backend listening on port {port}")
     app.run(host="0.0.0.0", port=port, debug=False)
 
-# ✅ Expose WSGI app for Gunicorn
-check_reachability()
+# ✅ Expose WSGI app for Gunicorn (no duplicate check)
 application = app
