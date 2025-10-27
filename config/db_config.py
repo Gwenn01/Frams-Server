@@ -12,7 +12,7 @@ MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
     raise ValueError("❌ MONGO_URI not found in environment variables.")
 
-client = MongoClient(MONGO_URI)
+client = MongoClient(MONGO_URI, maxPoolSize=20, connect=True)
 
 # Choose your database
 db = client["face_attendance_system"]
