@@ -138,26 +138,33 @@ def stop_session():
         print("❌ Error in /stop-session:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
 
-# ✅ Get currently active session
+# ✅ Get currently active session (with safety checks)
 @attendance_bp.route("/active-session", methods=["GET"])
 def get_active_session():
     try:
-        # 🔹 Allow instructor_id query parameter (optional)
+        # 🔹 Require instructor_id parameter
         instructor_id = request.args.get("instructor_id")
+        if not instructor_id:
+            print("⚠️ Missing instructor_id in request.")
+            return jsonify({
+                "active": False,
+                "error": "Missing instructor_id"
+            }), 400
 
-        query = {"is_attendance_active": True}
-        if instructor_id:
-            query["instructor_id"] = instructor_id  # filter per instructor
-
-        # If multiple classes are active for same instructor, return the first one
-        cls = classes_collection.find_one(query)
+        # 🔹 Query only for that instructor’s active session
+        cls = classes_collection.find_one({
+            "is_attendance_active": True,
+            "instructor_id": instructor_id
+        })
 
         if cls:
+            print(f"🟢 Active session found for instructor {instructor_id}: {cls.get('_id')}")
             return jsonify({
                 "active": True,
                 "class": _class_to_payload(cls)
             }), 200
 
+        print(f"🟡 No active session for instructor {instructor_id}")
         return jsonify({"active": False}), 200
 
     except Exception:
