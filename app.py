@@ -85,17 +85,23 @@ def server_error(e):
 
 
 # ----------------------------
-# 🧠 Preload Cached Embeddings (Flask 3.x Safe)
+# 🧠 Preload Cached Embeddings (Flask 2.x and 3.x safe)
 # ----------------------------
-@app.before_serving
 def preload_embeddings():
-    """Run once before serving the first request — cache face embeddings in memory."""
     print("🧠 Preloading face embeddings into memory...")
     try:
         cache_registered_faces()
         print("✅ Embeddings cached successfully!")
     except Exception as e:
         print(f"⚠️ Failed to preload embeddings: {e}")
+
+# Use whichever hook is available
+if hasattr(app, "before_serving"):      # Flask 3.x
+    app.before_serving(preload_embeddings)
+elif hasattr(app, "before_first_request"):  # Flask 2.x
+    app.before_first_request(preload_embeddings)
+else:                                    # Fallback
+    preload_embeddings()
 
 
 # ----------------------------
@@ -131,5 +137,5 @@ if __name__ == "__main__":
     print(f"✅ Backend listening on port {port}")
     app.run(host="0.0.0.0", port=port, debug=False)
 
-# ✅ Expose WSGI app for Gunicorn (no duplicate check)
+# ✅ Expose WSGI app for Gunicorn
 application = app
