@@ -350,3 +350,46 @@ def instructor_class_summary(instructor_id):
         return jsonify(results), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+# -------------------------------------------------
+# 🔹 Instructor Config for Attendance App
+# -------------------------------------------------
+@instructor_bp.route("/config/<string:instructor_id>", methods=["GET"])
+def get_instructor_config(instructor_id):
+    """Provide instructor + active class info for attendance_app"""
+    try:
+        instructor = find_instructor_by_id(instructor_id)
+        if not instructor:
+            return jsonify({"error": "Instructor not found"}), 404
+
+        # find currently active class for this instructor
+        active_class = classes_collection.find_one({
+            "instructor_id": instructor_id,
+            "is_attendance_active": True
+        })
+
+        config = {
+            "instructor_id": instructor["instructor_id"],
+            "instructor_name": f"{instructor['first_name']} {instructor['last_name']}",
+            "api_url": "https://frams-server-production.up.railway.app/api",
+        }
+
+        # include active class if any
+        if active_class:
+            config.update({
+                "active_class_id": str(active_class["_id"]),
+                "subject_title": active_class.get("subject_title"),
+                "subject_code": active_class.get("subject_code"),
+                "course": active_class.get("course"),
+                "section": active_class.get("section"),
+                "attendance_start_time": active_class.get("attendance_start_time"),
+                "attendance_end_time": active_class.get("attendance_end_time")
+            })
+
+        return jsonify(config), 200
+
+    except Exception as e:
+        import traceback
+        print("❌ Error in /config/<instructor_id>:", traceback.format_exc())
+        return jsonify({"error": "Internal server error"}), 500
+
