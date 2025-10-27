@@ -18,11 +18,15 @@ def _today_date_ph():
     """Return today's date normalized to midnight (PH time)."""
     return datetime.now(PH_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
 
-
-def refresh_session_state_from_db():
-    """Sync local state with DB and auto-stop if end_time expired."""
+def refresh_session_state_from_db(instructor_id=None):
+    """Sync local state with DB per instructor and auto-stop if end_time expired."""
     global attendance_active, current_class_id
-    active = classes_collection.find_one({"is_attendance_active": True})
+
+    query = {"is_attendance_active": True}
+    if instructor_id:
+        query["instructor_id"] = instructor_id
+
+    active = classes_collection.find_one(query)
     if active:
         end_time = active.get("attendance_end_time")
         if isinstance(end_time, str):
@@ -32,9 +36,7 @@ def refresh_session_state_from_db():
                 end_time = None
 
         now_ph = datetime.now(PH_TZ)
-
         if end_time and now_ph >= end_time:
-            # Auto stop if time expired
             stop_attendance_session(str(active["_id"]))
             attendance_active = False
             current_class_id = None
@@ -47,16 +49,21 @@ def refresh_session_state_from_db():
 
 
 def start_attendance_session(class_id, instructor_id=None):
-    """Mark class as having an active attendance session with auto-stop in 30 mins."""
+    """Start attendance per instructor (won’t affect others)."""
     global attendance_active, current_class_id
 
-    active = classes_collection.find_one({"is_attendance_active": True})
+    # 🔹 Check if the same instructor already has an active session
+    query = {"is_attendance_active": True}
+    if instructor_id:
+        query["instructor_id"] = instructor_id
+
+    active = classes_collection.find_one(query)
     if active:
-        print(f"⚠️ Attendance session already running for {active['_id']}")
+        print(f"⚠️ Instructor {instructor_id} already has an active session for {active['_id']}")
         return False
 
     start_time = datetime.now(PH_TZ)
-    end_time = start_time + timedelta(minutes=30)  # 🔹 auto-stop after 30 mins
+    end_time = start_time + timedelta(minutes=30)
 
     result = classes_collection.update_one(
         {"_id": ObjectId(class_id)},
@@ -64,7 +71,8 @@ def start_attendance_session(class_id, instructor_id=None):
             "is_attendance_active": True,
             "attendance_start_time": start_time.isoformat(),
             "attendance_end_time": end_time.isoformat(),
-            "activated_by": instructor_id or "system"
+            "activated_by": instructor_id or "system",
+            "instructor_id": instructor_id
         }}
     )
 
@@ -76,7 +84,7 @@ def start_attendance_session(class_id, instructor_id=None):
 
     attendance_active = True
     current_class_id = class_id
-    print(f"✅ Attendance session started for class {class_id} (auto-stop at {end_time})")
+    print(f"✅ Attendance session started for {class_id} by {instructor_id} (auto-stop at {end_time})")
     return True
 
 

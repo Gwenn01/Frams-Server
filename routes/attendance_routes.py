@@ -142,15 +142,29 @@ def stop_session():
 @attendance_bp.route("/active-session", methods=["GET"])
 def get_active_session():
     try:
-        cls = classes_collection.find_one({"is_attendance_active": True})
+        # 🔹 Allow instructor_id query parameter (optional)
+        instructor_id = request.args.get("instructor_id")
+
+        query = {"is_attendance_active": True}
+        if instructor_id:
+            query["instructor_id"] = instructor_id  # filter per instructor
+
+        # If multiple classes are active for same instructor, return the first one
+        cls = classes_collection.find_one(query)
+
         if cls:
-            return jsonify({"active": True, "class": _class_to_payload(cls)}), 200
+            return jsonify({
+                "active": True,
+                "class": _class_to_payload(cls)
+            }), 200
+
         return jsonify({"active": False}), 200
 
     except Exception:
         import traceback
         print("❌ Error in /active-session:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
+
 
 # ✅ Log/Upsert a student's attendance
 @attendance_bp.route("/log", methods=["POST"])
