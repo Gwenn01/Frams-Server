@@ -7,12 +7,12 @@ from concurrent.futures import ThreadPoolExecutor
 from flask_jwt_extended import create_access_token
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from models.face_db_model import save_face_data, get_student_by_id, normalize_student
+from models.face_db_model import save_face_data, get_student_by_id, normalize_student, get_student_by_id
 
 # ---------------------------
 # Blueprint + Config
 # ---------------------------
-face_bp = Blueprint("face", __name__)
+face_bp = Blueprint("face_bp", __name__)
 executor = ThreadPoolExecutor(max_workers=4)
 limiter = Limiter(key_func=get_remote_address, default_limits=[])
 
@@ -233,3 +233,29 @@ def get_registered_faces():
     except Exception as e:
         print("❌ /get_registered_faces error:", str(e))
         return jsonify({"error": "Failed to load registered faces"}), 500
+
+# ---------------------------
+# Public API for Attendance App
+# ---------------------------
+@face_bp.route("/api/faces", methods=["GET"])
+def get_all_faces():
+    """Return all registered student embeddings"""
+    faces = load_registered_faces()
+    return jsonify(faces), 200
+
+@face_bp.route("/api/student/<student_id>", methods=["GET"])
+def get_student(student_id):
+    """Return specific student by ID"""
+    student = get_student_by_id(student_id)
+    if not student:
+        return jsonify({"error": "Student not found"}), 404
+
+    normalized = {
+        "student_id": student.get("student_id"),
+        "first_name": student.get("first_name") or student.get("First_Name"),
+        "last_name": student.get("last_name") or student.get("Last_Name"),
+        "course": student.get("course") or student.get("Course"),
+        "section": student.get("section") or student.get("Section"),
+    }
+    return jsonify(normalized), 200
+
