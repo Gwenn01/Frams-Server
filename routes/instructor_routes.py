@@ -354,7 +354,7 @@ def instructor_class_summary(instructor_id):
 # -------------------------------------------------
 # 🔹 Instructor Config for Attendance App 
 # -------------------------------------------------
-@instructor_bp.route("/api/instructor/config/<string:instructor_id>", methods=["GET"])
+@instructor_bp.route("/config/<string:instructor_id>", methods=["GET"])
 def get_instructor_config(instructor_id):
     """Provide instructor + active class info for attendance_app"""
     try:
