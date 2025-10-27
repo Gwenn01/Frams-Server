@@ -352,9 +352,9 @@ def instructor_class_summary(instructor_id):
         return jsonify({"error": str(e)}), 500
     
 # -------------------------------------------------
-# 🔹 Instructor Config for Attendance App
+# 🔹 Instructor Config for Attendance App 
 # -------------------------------------------------
-@instructor_bp.route("/config/<string:instructor_id>", methods=["GET"])
+@instructor_bp.route("/api/instructor/config/<string:instructor_id>", methods=["GET"])
 def get_instructor_config(instructor_id):
     """Provide instructor + active class info for attendance_app"""
     try:
@@ -362,34 +362,34 @@ def get_instructor_config(instructor_id):
         if not instructor:
             return jsonify({"error": "Instructor not found"}), 404
 
-        # find currently active class for this instructor
+        # Find currently active class for this instructor
         active_class = classes_collection.find_one({
             "instructor_id": instructor_id,
             "is_attendance_active": True
         })
 
+        if not active_class:
+            return jsonify({"error": "No active attendance session found"}), 404
+
+        # ✅ Build full config
         config = {
             "instructor_id": instructor["instructor_id"],
             "instructor_name": f"{instructor['first_name']} {instructor['last_name']}",
+            "class_id": str(active_class["_id"]),
+            "subject_code": active_class.get("subject_code"),
+            "subject_title": active_class.get("subject_title"),
+            "course": active_class.get("course"),
+            "section": active_class.get("section"),
+            "attendance_start_time": active_class.get("attendance_start_time"),
+            "attendance_end_time": active_class.get("attendance_end_time"),
             "api_url": "https://frams-server-production.up.railway.app/api",
+            # 🔹 Include student list for the app
+            "students": active_class.get("students", [])
         }
-
-        # include active class if any
-        if active_class:
-            config.update({
-                "active_class_id": str(active_class["_id"]),
-                "subject_title": active_class.get("subject_title"),
-                "subject_code": active_class.get("subject_code"),
-                "course": active_class.get("course"),
-                "section": active_class.get("section"),
-                "attendance_start_time": active_class.get("attendance_start_time"),
-                "attendance_end_time": active_class.get("attendance_end_time")
-            })
 
         return jsonify(config), 200
 
     except Exception as e:
         import traceback
-        print("❌ Error in /config/<instructor_id>:", traceback.format_exc())
+        print("❌ Error in /api/instructor/config/<instructor_id>:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
-
