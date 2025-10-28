@@ -152,7 +152,7 @@ def register_auto():
 # ============================================================
 @face_bp.route("/login", methods=["POST"])
 def face_login():
-    """Authenticate student using Hugging Face recognition API (cached + faster)."""
+    """Authenticate student using Hugging Face recognition API (cached + auto-refresh)."""
     import time
     start_time = time.time()
 
@@ -163,21 +163,19 @@ def face_login():
             return jsonify({"error": "Missing image"}), 400
 
         # =====================================================
-        # 🚫 Define excluded student IDs (permanently excluded)
+        # 🚫 Define permanently excluded student IDs
         # =====================================================
         EXCLUDED_IDS = {"23-1-1-0520", "22-1-1-0558", "23-1-1-0052"}
 
         # =====================================================
-        # 🧠 Load or build cached embeddings (excluding IDs)
+        # ♻️ Helper: Refresh cache from MongoDB
         # =====================================================
-        registered_faces = current_app.config.get("CACHED_FACES")
-
-        if not registered_faces:
-            print("⚠️ No cached faces found — loading from MongoDB...")
+        def refresh_face_cache():
+            """Reload all embeddings from MongoDB and store in app cache."""
+            print("♻️ Refreshing face embeddings cache from MongoDB...")
             load_start = time.time()
             all_students = load_registered_faces()
 
-            # Exclude unwanted IDs before caching
             registered_faces = [
                 {"user_id": s["student_id"], "embedding": vec, "angle": angle}
                 for s in all_students
@@ -187,8 +185,37 @@ def face_login():
             ]
 
             current_app.config["CACHED_FACES"] = registered_faces
-            print(f"🧠 Cached {len(registered_faces)} embeddings "
-                  f"(excluding {len(EXCLUDED_IDS)} students) in {time.time() - load_start:.2f}s")
+            current_app.config["CACHED_FACES_LAST_UPDATE"] = time.time()
+
+            print(f"✅ Cache refreshed with {len(registered_faces)} embeddings "
+                  f"(excluding {len(EXCLUDED_IDS)} students) "
+                  f"in {time.time() - load_start:.2f}s")
+            return registered_faces
+
+        # =====================================================
+        # 🧠 Load or auto-refresh cached embeddings
+        # =====================================================
+        registered_faces = current_app.config.get("CACHED_FACES")
+        last_update = current_app.config.get("CACHED_FACES_LAST_UPDATE", 0)
+        cache_age = time.time() - last_update
+        CACHE_TTL = 300  # 5 minutes
+
+        should_refresh = False
+        if not registered_faces:
+            print("⚠️ Cache empty — will load from MongoDB.")
+            should_refresh = True
+        elif cache_age > CACHE_TTL:
+            print(f"⏰ Cache older than {CACHE_TTL}s — refreshing from MongoDB...")
+            should_refresh = True
+        else:
+            # Optional: validate cache size vs DB to detect external deletions
+            db_count = students_col.count_documents({})
+            if abs(len(registered_faces) - db_count) > 3:  # tolerate minor diff
+                print("⚠️ Cache count mismatch with DB — refreshing...")
+                should_refresh = True
+
+        if should_refresh:
+            registered_faces = refresh_face_cache()
 
         # =====================================================
         # 🔗 Send image + embeddings to Hugging Face
@@ -209,6 +236,10 @@ def face_login():
         # 🚫 Recognition failed
         if not hf_result.get("success"):
             print(f"🚫 Recognition failed: {hf_result.get('error', 'Unknown')}")
+            # If failure may be due to stale cache, refresh once
+            if "not found" in hf_result.get("error", "").lower():
+                print("⚠️ Possible stale cache — refreshing and retrying once...")
+                registered_faces = refresh_face_cache()
             return jsonify({
                 "error": hf_result.get("error", "Face not recognized"),
                 "match_score": hf_result.get("match_score"),
@@ -219,7 +250,11 @@ def face_login():
         sid = hf_result.get("student_id")
         raw_student = get_student_by_id(sid)
         if not raw_student:
-            return jsonify({"error": "Student not found"}), 404
+            print(f"⚠️ Student {sid} not found — refreshing cache and retrying...")
+            registered_faces = refresh_face_cache()
+            raw_student = get_student_by_id(sid)
+            if not raw_student:
+                return jsonify({"error": "Student not found"}), 404
 
         student = normalize_student(raw_student)
 
