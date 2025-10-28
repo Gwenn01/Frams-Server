@@ -163,7 +163,12 @@ def face_login():
             return jsonify({"error": "Missing image"}), 400
 
         # =====================================================
-        # 🧠 Use in-memory cache of embeddings if available
+        # 🚫 Define excluded student IDs (permanently excluded)
+        # =====================================================
+        EXCLUDED_IDS = {"23-1-1-0520", "22-1-1-0558", "23-1-1-0052"}
+
+        # =====================================================
+        # 🧠 Load or build cached embeddings (excluding IDs)
         # =====================================================
         registered_faces = current_app.config.get("CACHED_FACES")
 
@@ -171,35 +176,30 @@ def face_login():
             print("⚠️ No cached faces found — loading from MongoDB...")
             load_start = time.time()
             all_students = load_registered_faces()
+
+            # Exclude unwanted IDs before caching
             registered_faces = [
                 {"user_id": s["student_id"], "embedding": vec, "angle": angle}
                 for s in all_students
+                if s.get("student_id") not in EXCLUDED_IDS
                 for angle, vec in s.get("embeddings", {}).items()
                 if isinstance(vec, list) and vec
             ]
+
             current_app.config["CACHED_FACES"] = registered_faces
             print(f"🧠 Cached {len(registered_faces)} embeddings "
-                  f"in {time.time() - load_start:.2f}s")
-
-        # =====================================================
-        # 🚫 Exclude testing IDs
-        # =====================================================
-        excluded_ids = {"23-1-1-0520", "22-1-1-0558", "23-1-1-0052"}
-        filtered_faces = [f for f in registered_faces if f["user_id"] not in excluded_ids]
-
-        if not filtered_faces:
-            return jsonify({"error": "No registered faces found"}), 400
+                  f"(excluding {len(EXCLUDED_IDS)} students) in {time.time() - load_start:.2f}s")
 
         # =====================================================
         # 🔗 Send image + embeddings to Hugging Face
         # =====================================================
-        payload = {"image": base64_image, "registered_faces": filtered_faces}
+        payload = {"image": base64_image, "registered_faces": registered_faces}
 
         hf_start = time.time()
         res = requests.post(f"{HF_AI_URL}/recognize", json=payload, timeout=60)
         hf_elapsed = time.time() - hf_start
         print(f"⏱️ HF recognize latency = {hf_elapsed:.2f}s "
-              f"for {len(filtered_faces)} embeddings")
+              f"for {len(registered_faces)} embeddings")
 
         if res.status_code != 200:
             return jsonify({"error": "Hugging Face service error"}), res.status_code
