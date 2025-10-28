@@ -406,10 +406,31 @@ def update_student(student_id):
 # 📌 DELETE STUDENT
 @admin_bp.route("/api/admin/students/<student_id>", methods=["DELETE"])
 def delete_student(student_id):
-    result = students_col.delete_one({"student_id": student_id})
-    if result.deleted_count == 0:
-        return jsonify({"error": "Student not found"}), 404
-    return jsonify({"message": "Student deleted successfully"}), 200
+    """Delete a student record and refresh the face embeddings cache."""
+    try:
+        # Attempt to delete the student document
+        result = students_col.delete_one({"student_id": student_id})
+        if result.deleted_count == 0:
+            return jsonify({"error": "Student not found"}), 404
+
+        # ✅ Refresh the cached embeddings after deletion
+        print(f"🗑️ Student {student_id} deleted — refreshing face cache...")
+
+        # Import the helper from your face blueprint (same function inside /login)
+        from routes.face_routes import refresh_face_cache
+
+        refresh_face_cache()  # Rebuilds CACHED_FACES in memory
+
+        return jsonify({
+            "message": f"Student {student_id} deleted successfully and cache refreshed."
+        }), 200
+
+    except Exception as e:
+        import traceback
+        print("❌ Error deleting student:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
 
 # ==============================
 # ✅ Subject Management
