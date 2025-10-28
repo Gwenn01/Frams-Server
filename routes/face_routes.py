@@ -209,7 +209,7 @@ def face_login():
             should_refresh = True
         else:
             # Optional: validate cache size vs DB to detect external deletions
-            db_count = students_col.count_documents({})
+            db_count = students_collection.count_documents({})
             if abs(len(registered_faces) - db_count) > 3:  # tolerate minor diff
                 print("⚠️ Cache count mismatch with DB — refreshing...")
                 should_refresh = True
