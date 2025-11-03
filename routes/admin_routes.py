@@ -70,7 +70,7 @@ def generate_token(user_data):
         "user_id": user_data["user_id"],
         "full_name": user_data["full_name"],
         "email": user_data["email"],
-        "exp": datetime.datetime.utcnow() + datetime.timedelta(days=1),  # Token expiration time
+        "exp": datetime.utcnow() + timedelta(days=1),  # Token expiration time
     }
     return jwt.encode(payload, secret_key, algorithm="HS256")
 
