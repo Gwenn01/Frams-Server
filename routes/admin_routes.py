@@ -63,16 +63,6 @@ def _serialize_class(cls):
         "students": cls.get("students", []),
         "created_at": cls.get("created_at").isoformat() if cls.get("created_at") else None,
     }
-    
-# Function to generate JWT token
-def generate_token(user_data):
-    payload = {
-        "user_id": user_data["user_id"],
-        "full_name": user_data["full_name"],
-        "email": user_data["email"],
-        "exp": datetime.utcnow() + timedelta(days=1),  # Token expiration time
-    }
-    return jwt.encode(payload, secret_key, algorithm="HS256")
 
 # =========================================
 # ✅ Auth: Register (after frontend OTP)
@@ -110,9 +100,7 @@ def register_admin():
     }
 
     create_admin(admin_data)
-
-    token = generate_token(admin_data)
-    return jsonify({"message": "Admin registered successfully", "token": token}), 201
+    return jsonify({"message": "Admin registered successfully"}), 201
 
 # =========================================
 # ✅ Auth: Login
