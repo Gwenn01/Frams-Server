@@ -72,7 +72,7 @@ def generate_token(user_data):
         "email": user_data["email"],
         "exp": datetime.datetime.utcnow() + datetime.timedelta(days=1),  # Token expiration time
     }
-    return jwt.encode(payload)
+    return jwt.encode(payload, secret_key, algorithm="HS256")
 
 # =========================================
 # ✅ Auth: Register (after frontend OTP)
