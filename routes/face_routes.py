@@ -67,6 +67,16 @@ def get_cached_faces(excluded_ids=None):
         return refresh_face_cache(excluded_ids)
     return registered_faces
 
+def cache_registered_faces():
+    """Cache all registered embeddings in memory for faster login."""
+    all_students = load_registered_faces()
+    current_app.config["CACHED_FACES"] = [
+        {"user_id": s["student_id"], "embedding": vec, "angle": angle}
+        for s in all_students
+        for angle, vec in s.get("embeddings", {}).items()
+        if isinstance(vec, list) and vec
+    ]
+    print(f"🧠 Cached {len(current_app.config['CACHED_FACES'])} embeddings in memory.")
 
 # ============================================================
 # 🧠 REGISTER FACE (Hugging Face)
