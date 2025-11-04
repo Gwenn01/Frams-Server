@@ -16,7 +16,7 @@ def _today_date_str():
     return datetime.now(PH_TZ).strftime("%Y-%m-%d")
 
 def _parse_date_str(date_val):
-    """Parse input string/datetime -> YYYY-MM-DD string (PH time)."""
+    """Normalize date into YYYY-MM-DD string (PH time)."""
     if isinstance(date_val, datetime):
         if date_val.tzinfo is None:
             date_val = date_val.replace(tzinfo=PH_TZ)
@@ -41,13 +41,14 @@ def _now_datetime():
 # Attendance Logging
 # -----------------------------
 def log_attendance(class_data, student_data, status="Present", date_val=None, class_start_time=None):
+    """
+    Record student attendance. Marks as Late if 15–30 minutes late.
+    Does NOT log if >30 minutes late. Automatically avoids duplicates.
+    """
     now = _now_datetime()
-    if date_val is None:
-        date_val = _today_date_str()
-    else:
-        date_val = _parse_date_str(date_val)
+    date_val = _parse_date_str(date_val or _today_date_str())
 
-    # ---- compute status (Present/Late/Too Late) ----
+    # 🕓 Determine status (Present / Late / Too Late)
     if class_start_time:
         if isinstance(class_start_time, str):
             try:
@@ -66,9 +67,14 @@ def log_attendance(class_data, student_data, status="Present", date_val=None, cl
                 print("⛔ Too late (>30 min). No log created.")
                 return None
 
+    # 🚫 Prevent duplicates
+    if already_logged_today(student_data["student_id"], class_data["class_id"], date_val):
+        print(f"⚠️ {student_data['student_id']} already logged today — skipping.")
+        return None
+
     base_filter = {"class_id": class_data["class_id"], "date": date_val}
 
-    # Ensure the class/day document exists
+    # Ensure class/day record exists
     attendance_logs_collection.update_one(
         base_filter,
         {"$setOnInsert": {
@@ -80,13 +86,13 @@ def log_attendance(class_data, student_data, status="Present", date_val=None, cl
             "instructor_last_name": class_data.get("instructor_last_name"),
             "course": class_data.get("course"),
             "section": class_data.get("section"),
-            "date": date_val,   # ✅ stored as string
+            "date": date_val,
             "students": []
         }},
         upsert=True
     )
 
-    # Try to update existing student entry first
+    # Update existing entry if found
     res = attendance_logs_collection.update_one(
         {**base_filter, "students.student_id": student_data["student_id"]},
         {"$set": {
@@ -94,11 +100,11 @@ def log_attendance(class_data, student_data, status="Present", date_val=None, cl
             "students.$.last_name": student_data["last_name"],
             "students.$.status": status,
             "students.$.time": _now_time_str(),
-            "students.$.time_logged": now   # ✅ real datetime
+            "students.$.time_logged": now
         }}
     )
 
-    # If not present, push a new student entry
+    # If no entry updated, push a new one
     if res.modified_count == 0:
         attendance_logs_collection.update_one(
             base_filter,
@@ -108,14 +114,18 @@ def log_attendance(class_data, student_data, status="Present", date_val=None, cl
                 "last_name": student_data["last_name"],
                 "status": status,
                 "time": _now_time_str(),
-                "time_logged": now   # ✅ real datetime
+                "time_logged": now
             }}}
         )
 
 # -----------------------------
 # Queries
 # -----------------------------
-def has_logged_attendance(student_id, class_id, date_val=None):
+def already_logged_today(student_id, class_id, date_val=None):
+    """
+    Check if student already logged attendance for this date.
+    Prevents duplicate records from multi-face recognition.
+    """
     date_val = _parse_date_str(date_val) if date_val else _today_date_str()
     return attendance_logs_collection.find_one({
         "class_id": class_id,
@@ -123,11 +133,12 @@ def has_logged_attendance(student_id, class_id, date_val=None):
         "students.student_id": student_id
     }) is not None
 
-def get_attendance_by_student(student_id):
-    docs = attendance_logs_collection.find(
-        {"students.student_id": student_id}
-    ).sort("date", -1)
+def has_logged_attendance(student_id, class_id, date_val=None):
+    """Alias for already_logged_today (legacy support)."""
+    return already_logged_today(student_id, class_id, date_val)
 
+def get_attendance_by_student(student_id):
+    docs = attendance_logs_collection.find({"students.student_id": student_id}).sort("date", -1)
     out = []
     for d in docs:
         s = next((x for x in d.get("students", []) if x.get("student_id") == student_id), None)
@@ -142,7 +153,7 @@ def get_attendance_by_student(student_id):
                 "instructor_last_name": d.get("instructor_last_name"),
                 "course": d.get("course"),
                 "section": d.get("section"),
-                "date": d.get("date"),  # ✅ string
+                "date": d.get("date"),
                 "student": {
                     **s,
                     "time_logged": s.get("time_logged").astimezone(PH_TZ).strftime("%Y-%m-%d %H:%M:%S")
@@ -158,14 +169,13 @@ def get_attendance_by_class(class_id):
         out.append({
             **d,
             "_id": str(d["_id"]),
-            "date": d["date"]  # ✅ already stored as string
+            "date": d["date"]
         })
     return out
 
 def get_attendance_logs_by_class_and_date(class_id, start_date, end_date):
     start = _parse_date_str(start_date)
     end = _parse_date_str(end_date)
-
     docs = attendance_logs_collection.find(
         {"class_id": class_id, "date": {"$gte": start, "$lte": end}}
     ).sort("date", 1)
@@ -176,7 +186,7 @@ def get_attendance_logs_by_class_and_date(class_id, start_date, end_date):
             out.append({
                 "_id": str(d.get("_id")),
                 "class_id": d.get("class_id"),
-                "date": d.get("date"),  # ✅ string
+                "date": d.get("date"),
                 "student_id": s.get("student_id"),
                 "first_name": s.get("first_name"),
                 "last_name": s.get("last_name"),
@@ -202,7 +212,7 @@ def mark_absent_bulk(class_data, date_val, student_list):
             "instructor_last_name": class_data.get("instructor_last_name"),
             "course": class_data.get("course"),
             "section": class_data.get("section"),
-            "date": date_val,  # ✅ string
+            "date": date_val,
             "students": []
         }},
         upsert=True
@@ -218,7 +228,7 @@ def mark_absent_bulk(class_data, date_val, student_list):
                 "last_name": s["last_name"],
                 "status": "Absent",
                 "time": _now_time_str(),
-                "time_logged": now  # ✅ datetime
+                "time_logged": now
             }}}
         )
 
