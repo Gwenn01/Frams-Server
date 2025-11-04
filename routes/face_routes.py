@@ -1,13 +1,23 @@
 from flask import Blueprint, jsonify, request, current_app
-from datetime import datetime, timedelta
-import requests
-import numpy as np
-from config.db_config import db
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 from flask_jwt_extended import create_access_token
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from models.face_db_model import save_face_data, get_student_by_id, normalize_student, load_registered_faces
+import numpy as np
+import requests
+import time
+import traceback
+from bson import ObjectId
+
+from config.db_config import db
+from models.face_db_model import (
+    save_face_data,
+    get_student_by_id,
+    normalize_student,
+    load_registered_faces,
+)
+from models.attendance_model import log_attendance as log_attendance_model, already_logged_today
 
 # ============================================================
 # 🧩 CONFIGURATION
@@ -19,70 +29,84 @@ limiter = Limiter(key_func=get_remote_address, default_limits=[])
 # 🔗 Hugging Face microservice endpoint
 HF_AI_URL = "https://meuorii-face-recognition-attendance.hf.space"
 students_collection = db["students"]
+classes_collection = db["classes"]
 
-def cache_registered_faces():
-    """Cache all registered embeddings in memory for faster login."""
+# 🌏 Philippine timezone
+PH_TZ = timezone(timedelta(hours=8))
+CACHE_TTL = 300  # 5 minutes
+
+
+# ============================================================
+# 🧠 Helper: Cache Management
+# ============================================================
+def refresh_face_cache(excluded_ids=None):
+    """Reload embeddings from MongoDB and store in cache."""
+    excluded_ids = excluded_ids or set()
+    current_app.logger.info("♻️ Refreshing face embeddings cache from MongoDB...")
     all_students = load_registered_faces()
-    current_app.config["CACHED_FACES"] = [
+    registered_faces = [
         {"user_id": s["student_id"], "embedding": vec, "angle": angle}
         for s in all_students
+        if s.get("student_id") not in excluded_ids
         for angle, vec in s.get("embeddings", {}).items()
         if isinstance(vec, list) and vec
     ]
-    print(f"🧠 Cached {len(current_app.config['CACHED_FACES'])} embeddings in memory.")
-    
+    current_app.config["CACHED_FACES"] = registered_faces
+    current_app.config["CACHED_FACES_LAST_UPDATE"] = time.time()
+    current_app.logger.info(f"✅ Cache refreshed with {len(registered_faces)} embeddings.")
+    return registered_faces
+
+
+def get_cached_faces(excluded_ids=None):
+    """Return cached embeddings or refresh if expired."""
+    registered_faces = current_app.config.get("CACHED_FACES")
+    last_update = current_app.config.get("CACHED_FACES_LAST_UPDATE", 0)
+    cache_age = time.time() - last_update
+
+    if not registered_faces or cache_age > CACHE_TTL:
+        return refresh_face_cache(excluded_ids)
+    return registered_faces
+
+
 # ============================================================
 # 🧠 REGISTER FACE (Hugging Face)
 # ============================================================
 @face_bp.route("/register-auto", methods=["POST"])
 def register_auto():
-    import time
     start_time = time.time()
-
     try:
         data = request.get_json(silent=True) or {}
         student_id = data.get("student_id")
         if not student_id or not data.get("image"):
             return jsonify({"success": False, "error": "Missing student_id or image"}), 400
 
-        # -------------------------------
-        # 1️⃣ Call Hugging Face service
-        # -------------------------------
+        # 1️⃣ Call Hugging Face
         hf_start = time.time()
         res = requests.post(f"{HF_AI_URL}/register-auto", json=data, timeout=60)
         hf_elapsed = time.time() - hf_start
-        print(f"⏱️ HF_AI_URL latency = {hf_elapsed:.2f}s")
 
         if res.status_code != 200:
-            print(f"⚠️ HF service returned {res.status_code}: {res.text}")
+            current_app.logger.warning(f"⚠️ HF service error {res.status_code}: {res.text}")
             return jsonify({"success": False, "error": "Hugging Face service error"}), res.status_code
 
         hf_result = res.json()
         if not hf_result.get("success") or not hf_result.get("embeddings"):
             warning_msg = hf_result.get("warning") or hf_result.get("error") or "No embeddings returned"
-            print(f"⚠️ HF warning for {student_id}: {warning_msg}")
             return jsonify({
                 "success": False,
                 "warning": warning_msg,
-                "angle": hf_result.get("angle", "unknown")
+                "angle": hf_result.get("angle", "unknown"),
             }), 200
 
-        # -------------------------------
         # 2️⃣ Normalize embeddings
-        # -------------------------------
-        raw_embeddings = hf_result["embeddings"]
         normalized_embeddings = {}
-        for angle, vec in raw_embeddings.items():
+        for angle, vec in hf_result["embeddings"].items():
             v = np.array(vec, dtype=np.float32)
             norm = np.linalg.norm(v)
-            if norm == 0:
-                continue
-            normalized_embeddings[angle] = (v / norm).tolist()
+            if norm > 0:
+                normalized_embeddings[angle] = (v / norm).tolist()
 
-        # -------------------------------
-        # 3️⃣ Upsert student (1 Mongo op)
-        # -------------------------------
-        mongo_start = time.time()
+        # 3️⃣ Upsert student
         student_doc = students_collection.find_one_and_update(
             {"student_id": student_id},
             {
@@ -95,247 +119,189 @@ def register_auto():
                     "Contact_Number": data.get("Contact_Number"),
                     "Subjects": data.get("Subjects", []),
                     "registered": False,
-                    "created_at": datetime.utcnow()
+                    "created_at": datetime.utcnow(),
                 }
             },
             upsert=True,
-            return_document=True
+            return_document=True,
         )
 
-        # Prepare updated fields
         update_fields = {
             "student_id": student_id,
             "First_Name": data.get("First_Name") or student_doc.get("First_Name"),
             "Last_Name": data.get("Last_Name") or student_doc.get("Last_Name"),
-            "Middle_Name": data.get("Middle_Name") or student_doc.get("Middle_Name"),
             "Course": data.get("Course") or student_doc.get("Course"),
+            "Section": data.get("Section") or student_doc.get("Section"),
             "Email": data.get("Email") or student_doc.get("Email"),
             "Contact_Number": data.get("Contact_Number") or student_doc.get("Contact_Number"),
             "Subjects": data.get("Subjects") or student_doc.get("Subjects"),
-            "Section": data.get("Section") or student_doc.get("Section"),
             "registered": True,
             "embeddings": normalized_embeddings,
-            "updated_at": datetime.utcnow()
+            "updated_at": datetime.utcnow(),
         }
 
-        # -------------------------------
-        # 4️⃣ Async save to DB (non-blocking)
-        # -------------------------------
         executor.submit(save_face_data, student_id, update_fields)
-        print(f"🧵 Async save queued for {student_id} ({list(normalized_embeddings.keys())})")
 
-        mongo_elapsed = time.time() - mongo_start
         total_elapsed = time.time() - start_time
-        print(f"✅ /register-auto {student_id} → done in {total_elapsed:.2f}s "
-              f"(HF={hf_elapsed:.2f}s | MongoQueue={mongo_elapsed:.2f}s)")
+        current_app.logger.info(
+            f"✅ /register-auto {student_id} done in {total_elapsed:.2f}s "
+            f"(HF={hf_elapsed:.2f}s)"
+        )
 
-        # Respond immediately
         return jsonify({
             "success": True,
             "student_id": student_id,
             "angle": hf_result.get("angle", "unknown"),
-            "message": "Registration data queued for saving.",
+            "message": "Registration successful and saved.",
         }), 200
 
     except requests.exceptions.Timeout:
-        print("⏱️ Timeout contacting Hugging Face.")
         return jsonify({"success": False, "error": "AI service timeout"}), 504
     except Exception as e:
-        import traceback
-        print("❌ /register-auto error:", str(e))
-        print(traceback.format_exc())
-        return jsonify({"success": False, "error": f"Internal server error: {str(e)}"}), 500
+        current_app.logger.error(f"❌ /register-auto error: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 # ============================================================
-# 🔐 FACE LOGIN (Hugging Face)
+# 🔐 FACE LOGIN
 # ============================================================
 @face_bp.route("/login", methods=["POST"])
 def face_login():
-    """Authenticate student using Hugging Face recognition API (cached + auto-refresh)."""
-    import time
+    """Authenticate student using Hugging Face recognition API."""
     start_time = time.time()
-
     try:
         data = request.get_json(silent=True) or {}
         base64_image = data.get("image")
         if not base64_image:
             return jsonify({"error": "Missing image"}), 400
 
-        # =====================================================
-        # 🚫 Define permanently excluded student IDs
-        # =====================================================
         EXCLUDED_IDS = {"23-1-1-0520", "22-1-1-0558", "23-1-1-0052"}
+        registered_faces = get_cached_faces(EXCLUDED_IDS)
 
-        # =====================================================
-        # ♻️ Helper: Refresh cache from MongoDB
-        # =====================================================
-        def refresh_face_cache():
-            """Reload all embeddings from MongoDB and store in app cache."""
-            print("♻️ Refreshing face embeddings cache from MongoDB...")
-            load_start = time.time()
-            all_students = load_registered_faces()
-
-            registered_faces = [
-                {"user_id": s["student_id"], "embedding": vec, "angle": angle}
-                for s in all_students
-                if s.get("student_id") not in EXCLUDED_IDS
-                for angle, vec in s.get("embeddings", {}).items()
-                if isinstance(vec, list) and vec
-            ]
-
-            current_app.config["CACHED_FACES"] = registered_faces
-            current_app.config["CACHED_FACES_LAST_UPDATE"] = time.time()
-
-            print(f"✅ Cache refreshed with {len(registered_faces)} embeddings "
-                  f"(excluding {len(EXCLUDED_IDS)} students) "
-                  f"in {time.time() - load_start:.2f}s")
-            return registered_faces
-
-        # =====================================================
-        # 🧠 Load or auto-refresh cached embeddings
-        # =====================================================
-        registered_faces = current_app.config.get("CACHED_FACES")
-        last_update = current_app.config.get("CACHED_FACES_LAST_UPDATE", 0)
-        cache_age = time.time() - last_update
-        CACHE_TTL = 300  # 5 minutes
-
-        should_refresh = False
-        if not registered_faces:
-            print("⚠️ Cache empty — will load from MongoDB.")
-            should_refresh = True
-        elif cache_age > CACHE_TTL:
-            print(f"⏰ Cache older than {CACHE_TTL}s — refreshing from MongoDB...")
-            should_refresh = True
-        else:
-            # Optional: validate cache size vs DB to detect external deletions
-            db_count = students_collection.count_documents({})
-            if abs(len(registered_faces) - db_count) > 3:  # tolerate minor diff
-                print("⚠️ Cache count mismatch with DB — refreshing...")
-                should_refresh = True
-
-        if should_refresh:
-            registered_faces = refresh_face_cache()
-
-        # =====================================================
-        # 🔗 Send image + embeddings to Hugging Face
-        # =====================================================
+        # 🔗 Send to Hugging Face
         payload = {"image": base64_image, "registered_faces": registered_faces}
-
-        hf_start = time.time()
         res = requests.post(f"{HF_AI_URL}/recognize", json=payload, timeout=60)
-        hf_elapsed = time.time() - hf_start
-        print(f"⏱️ HF recognize latency = {hf_elapsed:.2f}s "
-              f"for {len(registered_faces)} embeddings")
 
         if res.status_code != 200:
             return jsonify({"error": "Hugging Face service error"}), res.status_code
 
         hf_result = res.json()
-
-        # 🚫 Recognition failed
         if not hf_result.get("success"):
-            print(f"🚫 Recognition failed: {hf_result.get('error', 'Unknown')}")
-            # If failure may be due to stale cache, refresh once
-            if "not found" in hf_result.get("error", "").lower():
-                print("⚠️ Possible stale cache — refreshing and retrying once...")
-                registered_faces = refresh_face_cache()
             return jsonify({
                 "error": hf_result.get("error", "Face not recognized"),
                 "match_score": hf_result.get("match_score"),
-                "anti_spoof_confidence": hf_result.get("anti_spoof_confidence")
+                "anti_spoof_confidence": hf_result.get("anti_spoof_confidence"),
             }), 400
 
-        # ✅ Successful match
         sid = hf_result.get("student_id")
         raw_student = get_student_by_id(sid)
         if not raw_student:
-            print(f"⚠️ Student {sid} not found — refreshing cache and retrying...")
-            registered_faces = refresh_face_cache()
+            refresh_face_cache(EXCLUDED_IDS)
             raw_student = get_student_by_id(sid)
             if not raw_student:
                 return jsonify({"error": "Student not found"}), 404
 
         student = normalize_student(raw_student)
-
-        # 🎟️ Generate JWT token (12-hour validity)
-        token = create_access_token(
-            identity=student.get("student_id"),
-            expires_delta=timedelta(hours=12)
-        )
+        token = create_access_token(identity=student.get("student_id"), expires_delta=timedelta(hours=12))
 
         total_elapsed = time.time() - start_time
-        print(f"✅ Match: {sid} | Score={hf_result.get('match_score'):.4f} | "
-              f"AntiSpoof={hf_result.get('anti_spoof_confidence'):.2f} "
-              f"| Total={total_elapsed:.2f}s")
+        current_app.logger.info(
+            f"✅ Match: {sid} | Score={hf_result.get('match_score'):.4f} | "
+            f"AntiSpoof={hf_result.get('anti_spoof_confidence'):.2f} | Total={total_elapsed:.2f}s"
+        )
 
         return jsonify({
             "token": token,
-            "student": {
-                "student_id": student.get("student_id", ""),
-                "first_name": student.get("first_name", ""),
-                "last_name": student.get("last_name", ""),
-                "course": student.get("course", ""),
-                "section": student.get("section", "")
-            },
+            "student": student,
             "match_score": hf_result.get("match_score"),
             "anti_spoof_confidence": hf_result.get("anti_spoof_confidence"),
         }), 200
 
-    except requests.exceptions.Timeout:
-        print("⏱️ Timeout contacting Hugging Face.")
-        return jsonify({"error": "AI service timeout"}), 504
     except Exception as e:
-        import traceback
-        print("❌ /login error:", str(e))
-        print(traceback.format_exc())
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-
-# ============================================================
-# 🌐 PUBLIC API (for Attendance App)
-# ============================================================
-@face_bp.route("/faces", methods=["GET"])
-def get_all_faces():
-    """Return all registered student embeddings from students collection."""
-    try:
-        students_collection = db["students"]
-        faces = []
-
-        # 🔍 Find only students that have embeddings
-        for s in students_collection.find({"embeddings": {"$exists": True, "$ne": {}}}):
-            faces.append({
-                "student_id": s.get("student_id"),
-                "first_name": s.get("first_name") or s.get("First_Name"),
-                "last_name": s.get("last_name") or s.get("Last_Name"),
-                "embeddings": s.get("embeddings", {})
-            })
-
-        if not faces:
-            print("⚠️ No registered student embeddings found in database.")
-            return jsonify({"error": "No registered student embeddings found"}), 404
-
-        print(f"✅ Loaded {len(faces)} registered student embeddings.")
-        return jsonify(faces), 200
-
-    except Exception as e:
-        import traceback
-        print("❌ Error in /api/faces:", traceback.format_exc())
+        current_app.logger.error(f"❌ /login error: {traceback.format_exc()}")
         return jsonify({"error": "Internal server error"}), 500
 
 
+# ============================================================
+# 🌐 MULTI-FACE ATTENDANCE
+# ============================================================
+@face_bp.route("/multi-recognize", methods=["POST"])
+def multi_face_recognize():
+    """Detect multiple faces, recognize them, and log attendance."""
+    start_time = time.time()
+    try:
+        data = request.get_json(silent=True) or {}
+        base64_image = data.get("image")
+        class_id = data.get("class_id")
 
-@face_bp.route("/student/<student_id>", methods=["GET"])
-def get_student(student_id):
-    """Return specific student by ID."""
-    student = get_student_by_id(student_id)
-    if not student:
-        return jsonify({"error": "Student not found"}), 404
+        if not base64_image or not class_id:
+            return jsonify({"error": "Missing image or class_id"}), 400
 
-    normalized = {
-        "student_id": student.get("student_id"),
-        "first_name": student.get("first_name") or student.get("First_Name"),
-        "last_name": student.get("last_name") or student.get("Last_Name"),
-        "course": student.get("course") or student.get("Course"),
-        "section": student.get("section") or student.get("Section"),
-    }
-    return jsonify(normalized), 200
+        registered_faces = get_cached_faces()
+        payload = {"image": base64_image, "registered_faces": registered_faces}
+        res = requests.post(f"{HF_AI_URL}/recognize-multi", json=payload, timeout=90)
+
+        if res.status_code != 200:
+            return jsonify({"error": "AI service error"}), res.status_code
+
+        hf_result = res.json()
+        recognized = hf_result.get("recognized", [])
+        if not recognized:
+            return jsonify({"message": "No faces recognized"}), 200
+
+        cls = classes_collection.find_one({"_id": ObjectId(class_id)})
+        if not cls:
+            return jsonify({"error": "Class not found"}), 404
+
+        class_data = {
+            "class_id": str(cls["_id"]),
+            "subject_code": cls.get("subject_code"),
+            "subject_title": cls.get("subject_title"),
+            "instructor_id": cls.get("instructor_id"),
+            "course": cls.get("course"),
+            "section": cls.get("section"),
+        }
+
+        date_val = datetime.now(PH_TZ)
+        results = []
+
+        for face in recognized:
+            sid = face.get("student_id")
+            if not sid:
+                continue
+
+            if already_logged_today(sid, class_id, date_val):
+                results.append({"student_id": sid, "status": "AlreadyMarked"})
+                continue
+
+            raw_student = get_student_by_id(sid)
+            if not raw_student:
+                continue
+
+            student_data = {
+                "student_id": raw_student.get("student_id"),
+                "first_name": raw_student.get("first_name") or raw_student.get("First_Name"),
+                "last_name": raw_student.get("last_name") or raw_student.get("Last_Name"),
+            }
+
+            log_res = log_attendance_model(
+                class_data=class_data,
+                student_data=student_data,
+                date_val=date_val,
+                class_start_time=cls.get("attendance_start_time"),
+            )
+            if log_res:
+                results.append({
+                    "student_id": sid,
+                    "name": f"{student_data['first_name']} {student_data['last_name']}",
+                    "status": log_res["status"],
+                    "bbox": face.get("bbox"),
+                })
+
+        duration = time.time() - start_time
+        current_app.logger.info(f"✅ Multi-face logged {len(results)} students in {duration:.2f}s")
+        return jsonify({"success": True, "logged": results, "count": len(results)}), 200
+
+    except Exception as e:
+        current_app.logger.error(f"❌ /multi-recognize error: {traceback.format_exc()}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
