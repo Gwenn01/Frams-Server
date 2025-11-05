@@ -343,19 +343,25 @@ def multi_face_recognize():
                 })
                 continue
 
-           # 🕒 Detect if student is late (10+ minutes after start)
+            # 🕒 Detect if student is late (10+ minutes after start)
             attendance_start_time = cls.get("attendance_start_time")
             if attendance_start_time:
                 try:
-                    # Convert to datetime safely (handles timezone format)
-                    start_time = datetime.fromisoformat(str(attendance_start_time).replace("Z", "+00:00"))
-                    diff_minutes = (date_val - start_time).total_seconds() / 60.0
+                    # Convert safely to datetime (handles "Z" or ISO format)
+                    class_start_dt = datetime.fromisoformat(
+                        str(attendance_start_time).replace("Z", "+00:00")
+                    )
+                    diff_minutes = (date_val - class_start_dt).total_seconds() / 60.0
                     status = "Late" if diff_minutes > 10 else "Present"
+                    current_app.logger.info(
+                        f"🕒 Student {sid}: {diff_minutes:.1f} min difference → {status}"
+                    )
                 except Exception as e:
                     current_app.logger.warning(f"⚠️ Time parse error: {e}")
                     status = "Present"
             else:
                 status = "Present"
+
 
             # 📝 Log attendance normally
             log_res = log_attendance_model(
