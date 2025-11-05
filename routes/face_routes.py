@@ -265,6 +265,8 @@ def multi_face_recognize():
         cls = classes_collection.find_one({"_id": ObjectId(class_id)})
         if not cls:
             return jsonify({"error": "Class not found"}), 404
+        
+        date_val = datetime.now(PH_TZ)
 
         # 🧩 Build class data (with full schema matching 'classes')
         class_data = {
@@ -285,8 +287,6 @@ def multi_face_recognize():
             "date": date_val.strftime("%Y-%m-%d"),
         }
 
-
-        date_val = datetime.now(PH_TZ)
         results = []
 
         for face in recognized:
