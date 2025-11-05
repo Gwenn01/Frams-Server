@@ -241,14 +241,14 @@ def multi_face_recognize():
     start_time = time.time()
     try:
         data = request.get_json(silent=True) or {}
-        base64_image = data.get("image")
+        faces = data.get("faces", [])
         class_id = data.get("class_id")
 
-        if not base64_image or not class_id:
-            return jsonify({"error": "Missing image or class_id"}), 400
+        if not faces or not class_id:
+            return jsonify({"error": "Missing faces or class_id"}), 400
 
         registered_faces = get_cached_faces()
-        payload = {"image": base64_image, "registered_faces": registered_faces}
+        payload = {"faces": faces, "registered_faces": registered_faces}
         res = requests.post(f"{HF_AI_URL}/recognize-multi", json=payload, timeout=90)
 
         if res.status_code != 200:
