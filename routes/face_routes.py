@@ -247,6 +247,7 @@ def multi_face_recognize():
         if not faces or not class_id:
             return jsonify({"error": "Missing faces or class_id"}), 400
 
+        # 🔹 Call external AI recognition API
         registered_faces = get_cached_faces()
         payload = {"faces": faces, "registered_faces": registered_faces}
         res = requests.post(f"{HF_AI_URL}/recognize-multi", json=payload, timeout=90)
@@ -259,17 +260,21 @@ def multi_face_recognize():
         if not recognized:
             return jsonify({"message": "No faces recognized"}), 200
 
+        # 🔹 Get class info
         cls = classes_collection.find_one({"_id": ObjectId(class_id)})
         if not cls:
             return jsonify({"error": "Class not found"}), 404
 
+        # 🧩 Build class data (with fallbacks)
         class_data = {
             "class_id": str(cls["_id"]),
-            "subject_code": cls.get("subject_code"),
-            "subject_title": cls.get("subject_title"),
-            "instructor_id": cls.get("instructor_id"),
-            "course": cls.get("course"),
-            "section": cls.get("section"),
+            "subject_code": cls.get("subject_code", ""),
+            "subject_title": cls.get("subject_title", ""),
+            "instructor_id": cls.get("instructor_id", ""),
+            "instructor_first_name": cls.get("instructor_first_name", "Unknown"),
+            "instructor_last_name": cls.get("instructor_last_name", "Unknown"),
+            "course": cls.get("course", ""),
+            "section": cls.get("section", ""),
         }
 
         date_val = datetime.now(PH_TZ)
@@ -280,38 +285,78 @@ def multi_face_recognize():
             if not sid:
                 continue
 
-            if already_logged_today(sid, class_id, date_val):
-                results.append({"student_id": sid, "status": "AlreadyMarked"})
-                continue
-
+            # 🔎 Fetch student data
             raw_student = get_student_by_id(sid)
             if not raw_student:
                 continue
 
             student_data = {
                 "student_id": raw_student.get("student_id"),
-                "first_name": raw_student.get("first_name") or raw_student.get("First_Name"),
-                "last_name": raw_student.get("last_name") or raw_student.get("Last_Name"),
+                "first_name": raw_student.get("first_name")
+                or raw_student.get("First_Name", ""),
+                "last_name": raw_student.get("last_name")
+                or raw_student.get("Last_Name", ""),
             }
 
+            # ✅ Already logged check
+            if already_logged_today(sid, class_id, date_val):
+                results.append({
+                    "student_id": sid,
+                    "first_name": student_data["first_name"],
+                    "last_name": student_data["last_name"],
+                    "status": "AlreadyMarked",
+                    "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
+                    "subject_code": class_data["subject_code"],
+                    "subject_title": class_data["subject_title"],
+                    "course": class_data["course"],
+                    "section": class_data["section"],
+                    "instructor_first_name": class_data["instructor_first_name"],
+                    "instructor_last_name": class_data["instructor_last_name"],
+                })
+                continue
+
+            # 📝 Log attendance
             log_res = log_attendance_model(
                 class_data=class_data,
                 student_data=student_data,
                 date_val=date_val,
                 class_start_time=cls.get("attendance_start_time"),
             )
+
             if log_res:
                 results.append({
                     "student_id": sid,
-                    "name": f"{student_data['first_name']} {student_data['last_name']}",
+                    "first_name": student_data["first_name"],
+                    "last_name": student_data["last_name"],
                     "status": log_res["status"],
+                    "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
+                    "subject_code": class_data["subject_code"],
+                    "subject_title": class_data["subject_title"],
+                    "course": class_data["course"],
+                    "section": class_data["section"],
+                    "instructor_first_name": class_data["instructor_first_name"],
+                    "instructor_last_name": class_data["instructor_last_name"],
                     "bbox": face.get("bbox"),
                 })
 
         duration = time.time() - start_time
-        current_app.logger.info(f"✅ Multi-face logged {len(results)} students in {duration:.2f}s")
-        return jsonify({"success": True, "logged": results, "count": len(results)}), 200
+        current_app.logger.info(
+            f"✅ Multi-face logged {len(results)} students in {duration:.2f}s"
+        )
+
+        return jsonify({
+            "success": True,
+            "logged": results,
+            "count": len(results),
+            "subject_code": class_data["subject_code"],
+            "subject_title": class_data["subject_title"],
+            "course": class_data["course"],
+            "section": class_data["section"],
+            "instructor_first_name": class_data["instructor_first_name"],
+            "instructor_last_name": class_data["instructor_last_name"],
+        }), 200
 
     except Exception as e:
         current_app.logger.error(f"❌ /multi-recognize error: {traceback.format_exc()}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
