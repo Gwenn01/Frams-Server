@@ -266,17 +266,25 @@ def multi_face_recognize():
         if not cls:
             return jsonify({"error": "Class not found"}), 404
 
-        # 🧩 Build class data (with fallbacks)
+        # 🧩 Build class data (with full schema matching 'classes')
         class_data = {
             "class_id": str(cls["_id"]),
             "subject_code": cls.get("subject_code", ""),
             "subject_title": cls.get("subject_title", ""),
+            "course": cls.get("course", ""),
+            "section": cls.get("section", ""),
+            "year_level": cls.get("year_level", ""),
+            "semester": cls.get("semester", ""),
             "instructor_id": cls.get("instructor_id", ""),
             "instructor_first_name": cls.get("instructor_first_name", "Unknown"),
             "instructor_last_name": cls.get("instructor_last_name", "Unknown"),
-            "course": cls.get("course", ""),
-            "section": cls.get("section", ""),
+            "attendance_start_time": cls.get("attendance_start_time", ""),
+            "attendance_end_time": cls.get("attendance_end_time", ""),
+            "is_attendance_active": cls.get("is_attendance_active", False),
+            "activated_by": cls.get("activated_by", ""),
+            "date": date_val.strftime("%Y-%m-%d"),
         }
+
 
         date_val = datetime.now(PH_TZ)
         results = []
@@ -335,6 +343,20 @@ def multi_face_recognize():
                 })
                 continue
 
+           # 🕒 Detect if student is late (10+ minutes after start)
+            attendance_start_time = cls.get("attendance_start_time")
+            if attendance_start_time:
+                try:
+                    # Convert to datetime safely (handles timezone format)
+                    start_time = datetime.fromisoformat(str(attendance_start_time).replace("Z", "+00:00"))
+                    diff_minutes = (date_val - start_time).total_seconds() / 60.0
+                    status = "Late" if diff_minutes > 10 else "Present"
+                except Exception as e:
+                    current_app.logger.warning(f"⚠️ Time parse error: {e}")
+                    status = "Present"
+            else:
+                status = "Present"
+
             # 📝 Log attendance normally
             log_res = log_attendance_model(
                 class_data=class_data,
@@ -343,7 +365,9 @@ def multi_face_recognize():
                 class_start_time=cls.get("attendance_start_time"),
             )
 
+
             if log_res:
+                log_res["status"] = status
                 results.append({
                     "student_id": sid,
                     "first_name": student_data["first_name"],
