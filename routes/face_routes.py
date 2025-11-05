@@ -30,6 +30,7 @@ limiter = Limiter(key_func=get_remote_address, default_limits=[])
 HF_AI_URL = "https://meuorii-face-recognition-attendance.hf.space"
 students_collection = db["students"]
 classes_collection = db["classes"]
+attendance_collection = db["attendance_logs"]
 
 # 🌏 Philippine timezone
 PH_TZ = timezone(timedelta(hours=8))
@@ -298,13 +299,32 @@ def multi_face_recognize():
                 or raw_student.get("Last_Name", ""),
             }
 
-            # ✅ Already logged check
+            # ✅ Check if already logged
             if already_logged_today(sid, class_id, date_val):
+                # 🔍 Fetch existing log to display real status (not "AlreadyMarked")
+                existing_log = attendance_collection.find_one(
+                    {
+                        "class_id": class_id,
+                        "students.student_id": sid,
+                        "date": {
+                            "$gte": date_val.replace(hour=0, minute=0, second=0),
+                            "$lt": date_val.replace(hour=23, minute=59, second=59),
+                        },
+                    },
+                    {"students.$": 1}
+                )
+
+                existing_status = (
+                    existing_log["students"][0]["status"]
+                    if existing_log and "students" in existing_log
+                    else "Present"
+                )
+
                 results.append({
                     "student_id": sid,
                     "first_name": student_data["first_name"],
                     "last_name": student_data["last_name"],
-                    "status": "AlreadyMarked",
+                    "status": existing_status,  # 👈 Use actual recorded status
                     "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
                     "subject_code": class_data["subject_code"],
                     "subject_title": class_data["subject_title"],
@@ -315,7 +335,7 @@ def multi_face_recognize():
                 })
                 continue
 
-            # 📝 Log attendance
+            # 📝 Log attendance normally
             log_res = log_attendance_model(
                 class_data=class_data,
                 student_data=student_data,
