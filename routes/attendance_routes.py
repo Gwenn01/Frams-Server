@@ -138,6 +138,7 @@ def stop_session():
         import traceback
         print("❌ Error in /stop-session:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
+    
 
 # ✅ Get currently active session (with auto-detect fallback)
 @attendance_bp.route("/active-session", methods=["GET"])
