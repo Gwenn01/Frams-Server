@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from bson import ObjectId
 from datetime import datetime, timedelta, timezone
+from threading import Thread
 
 from utils.attendance_session import (
     start_attendance_session,
@@ -93,6 +94,7 @@ def start_session():
         return jsonify({"error": "Internal server error"}), 500
 
 # ✅ Stop attendance session (auto-mark absentees)
+# ✅ Stop attendance session (auto-mark absentees asynchronously)
 @attendance_bp.route("/stop-session", methods=["POST"])
 def stop_session():
     try:
@@ -102,41 +104,64 @@ def stop_session():
         if not class_id:
             return jsonify({"error": "Missing class_id"}), 400
 
+        # Check if there's an active session first
         ok = stop_attendance_session(class_id)
         if not ok:
             return jsonify({"error": f"No active session for class {class_id}"}), 400
 
-        cls = classes_collection.find_one({"_id": ObjectId(class_id)})
-        if not cls:
-            return jsonify({"error": "Class not found"}), 404
+        # ✅ Run absentee marking in a background thread
+        Thread(target=_finalize_stop_session, args=(class_id,)).start()
 
-        # 🔹 Auto mark absentees
-        today = _today_date()
-        today_str = today.strftime("%Y-%m-%d")
-        today_logs = get_attendance_logs_by_class_and_date(class_id, today_str, today_str)
-
-        logged_ids = {
-            s["student_id"] for log in today_logs for s in log.get("students", [])
-        }
-        all_students = cls.get("students", [])
-        absent_students = [
-            s for s in all_students if s.get("student_id") not in logged_ids
-        ]
-
-        if absent_students:
-            class_data = _class_to_payload(cls)
-            mark_absent_bulk(class_data, today, absent_students)
-
+        # ✅ Respond immediately so frontend doesn’t timeout
         return jsonify({
             "success": True,
-            "message": f"🛑 Session stopped. Absent marked for {len(absent_students)} students.",
-            "class": _class_to_payload(cls),
+            "message": "🛑 Session stop initiated — absentees will be marked in background."
         }), 200
 
     except Exception:
         import traceback
         print("❌ Error in /stop-session:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
+
+
+def _finalize_stop_session(class_id):
+    """Handles absentee marking safely in background."""
+    from app import app
+    with app.app_context():
+        try:
+            print(f"⚙️ Finalizing attendance stop for class {class_id}...")
+
+            cls = classes_collection.find_one({"_id": ObjectId(class_id)})
+            if not cls:
+                print(f"⚠️ Class {class_id} not found.")
+                return
+
+            today = _today_date()
+            today_str = today.strftime("%Y-%m-%d")
+
+            # Fetch today’s logs
+            today_logs = get_attendance_logs_by_class_and_date(class_id, today_str, today_str)
+
+            # Get all logged student IDs
+            logged_ids = {
+                s["student_id"] for log in today_logs for s in log.get("students", [])
+            }
+
+            # Find absentees
+            all_students = cls.get("students", [])
+            absent_students = [
+                s for s in all_students if s.get("student_id") not in logged_ids
+            ]
+
+            if absent_students:
+                class_data = _class_to_payload(cls)
+                mark_absent_bulk(class_data, today, absent_students)
+                print(f"✅ Marked {len(absent_students)} absentees for class {class_id}.")
+            else:
+                print(f"🟢 No absentees for class {class_id}.")
+
+        except Exception as e:
+            print(f"❌ Error in _finalize_stop_session for {class_id}: {e}")
 
 
 # ✅ Get currently active session (with auto-detect fallback)
