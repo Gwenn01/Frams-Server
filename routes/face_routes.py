@@ -265,6 +265,7 @@ def multi_face_recognize():
         data = request.get_json(silent=True) or {}
         faces = data.get("faces", [])
         class_id = data.get("class_id")
+        debug_mode = request.args.get("debug", "0") == "1"  # 🧪 toggle test mode via ?debug=1
 
         if not faces or not class_id:
             return jsonify({"error": "Missing faces or class_id"}), 400
@@ -289,7 +290,7 @@ def multi_face_recognize():
         
         date_val = datetime.now(PH_TZ)
 
-        # 🧩 Build class data (with full schema matching 'classes')
+        # 🧩 Build class data (for logging)
         class_data = {
             "class_id": str(cls["_id"]),
             "subject_code": cls.get("subject_code", ""),
@@ -315,87 +316,50 @@ def multi_face_recognize():
             if not sid:
                 continue
 
-            # 🔎 Fetch student data
             raw_student = get_student_by_id(sid)
             if not raw_student:
                 continue
 
             student_data = {
                 "student_id": raw_student.get("student_id"),
-                "first_name": raw_student.get("first_name")
-                or raw_student.get("First_Name", ""),
-                "last_name": raw_student.get("last_name")
-                or raw_student.get("Last_Name", ""),
+                "first_name": raw_student.get("first_name") or raw_student.get("First_Name", ""),
+                "last_name": raw_student.get("last_name") or raw_student.get("Last_Name", ""),
             }
 
-            status = "Present"
-
-            # ✅ Check if already logged
-            if already_logged_today(sid, class_id, date_val):
-                # 🔍 Fetch existing log to display real status (not "AlreadyMarked")
-                existing_log = attendance_collection.find_one(
-                    {
-                        "class_id": class_id,
-                        "students.student_id": sid,
-                        "date": {
-                            "$gte": date_val.replace(hour=0, minute=0, second=0),
-                            "$lt": date_val.replace(hour=23, minute=59, second=59),
-                        },
-                    },
-                    {"students.$": 1}
-                )
-
-                if existing_log and "students" in existing_log:
-                    existing_status = existing_log["students"][0].get("status", "Present")
-                else:
-                    existing_status = status
-
-                results.append({
-                    "student_id": sid,
-                    "first_name": student_data["first_name"],
-                    "last_name": student_data["last_name"],
-                    "status": existing_status,  # 👈 Use actual recorded status
-                    "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
-                    "subject_code": class_data["subject_code"],
-                    "subject_title": class_data["subject_title"],
-                    "course": class_data["course"],
-                    "section": class_data["section"],
-                    "instructor_first_name": class_data["instructor_first_name"],
-                    "instructor_last_name": class_data["instructor_last_name"],
-                })
-                continue
-
-            # 🕒 Detect if student is late (10+ minutes after start)
+            # 🕒 Determine status
             attendance_start_time = cls.get("attendance_start_time")
             if attendance_start_time:
-                # 🕒 DEBUG MODE: Force Late status for testing
                 try:
-                    diff_minutes = 15  # ⏰ pretend student is 15 minutes late
-                    status = "Late" if diff_minutes > 10 else "Present"
-                    current_app.logger.info(f"🧪 [TEST MODE] Forced diff_minutes={diff_minutes} → {status}")
+                    if debug_mode:
+                        diff_minutes = 15  # force simulate 15-min late
+                        status = "Late" if diff_minutes > 10 else "Present"
+                        current_app.logger.info(f"🧪 DEBUG MODE: diff_minutes={diff_minutes} → {status}")
+                    else:
+                        start_dt = datetime.combine(date_val.date(), datetime.strptime(attendance_start_time, "%H:%M").time())
+                        diff = (date_val - start_dt).total_seconds() / 60
+                        status = "Late" if diff > 10 else "Present"
+                        current_app.logger.info(f"🕒 Actual diff_minutes={diff:.2f} → {status}")
                 except Exception as e:
-                    current_app.logger.warning(f"⚠️ Test time simulation error: {e}")
+                    current_app.logger.warning(f"⚠️ Time computation error: {e}")
                     status = "Present"
             else:
                 status = "Present"
 
-            # 📝 Log attendance normally
+            # ✅ Always log or update
             log_res = log_attendance_model(
                 class_data=class_data,
                 student_data=student_data,
-                status=status, 
+                status=status,
                 date_val=date_val,
                 class_start_time=cls.get("attendance_start_time"),
             )
 
-
             if log_res:
-                log_res["status"] = status
                 results.append({
                     "student_id": sid,
                     "first_name": student_data["first_name"],
                     "last_name": student_data["last_name"],
-                    "status": log_res["status"],
+                    "status": status,
                     "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
                     "subject_code": class_data["subject_code"],
                     "subject_title": class_data["subject_title"],
@@ -407,10 +371,7 @@ def multi_face_recognize():
                 })
 
         duration = time.time() - start_time
-        current_app.logger.info(
-            f"✅ Multi-face logged {len(results)} students in {duration:.2f}s"
-        )
-
+        current_app.logger.info(f"✅ Multi-face logged {len(results)} students in {duration:.2f}s")
         current_app.logger.info(f"🧾 FINAL LOGGED RESULTS → {json.dumps(results, indent=2)}")
 
         return jsonify({
