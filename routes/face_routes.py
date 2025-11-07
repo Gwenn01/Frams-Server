@@ -9,6 +9,7 @@ import requests
 import time
 import traceback
 from bson import ObjectId
+import json
 
 from config.db_config import db
 from models.face_db_model import (
@@ -327,6 +328,8 @@ def multi_face_recognize():
                 or raw_student.get("Last_Name", ""),
             }
 
+            status = "Present"
+
             # ✅ Check if already logged
             if already_logged_today(sid, class_id, date_val):
                 # 🔍 Fetch existing log to display real status (not "AlreadyMarked")
@@ -407,6 +410,8 @@ def multi_face_recognize():
         current_app.logger.info(
             f"✅ Multi-face logged {len(results)} students in {duration:.2f}s"
         )
+
+        current_app.logger.info(f"🧾 FINAL LOGGED RESULTS → {json.dumps(results, indent=2)}")
 
         return jsonify({
             "success": True,
