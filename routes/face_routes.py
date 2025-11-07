@@ -9,7 +9,6 @@ import requests
 import time
 import traceback
 from bson import ObjectId
-import json
 
 from config.db_config import db
 from models.face_db_model import (
@@ -58,35 +57,15 @@ def refresh_face_cache(excluded_ids=None):
     current_app.logger.info(f"✅ Cache refreshed with {len(registered_faces)} embeddings.")
     return registered_faces
 
-def get_cached_faces(class_id=None, excluded_ids=None):
-    """Return cached embeddings, optionally filtered by class_id."""
-    excluded_ids = excluded_ids or set()
+
+def get_cached_faces(excluded_ids=None):
+    """Return cached embeddings or refresh if expired."""
     registered_faces = current_app.config.get("CACHED_FACES")
     last_update = current_app.config.get("CACHED_FACES_LAST_UPDATE", 0)
     cache_age = time.time() - last_update
 
-    # 🔄 Refresh if cache expired
     if not registered_faces or cache_age > CACHE_TTL:
-        refresh_face_cache(excluded_ids)
-        registered_faces = current_app.config["CACHED_FACES"]
-
-    # 🎯 If a class_id is given, limit to students in that class
-    if class_id:
-        cls = classes_collection.find_one({"_id": ObjectId(class_id)})
-        if not cls:
-            current_app.logger.warning(f"⚠️ No class found for ID {class_id}")
-            return []
-
-        enrolled_ids = {s["student_id"] for s in cls.get("students", [])}
-        filtered_faces = [
-            f for f in registered_faces
-            if f["user_id"] in enrolled_ids and f["user_id"] not in excluded_ids
-        ]
-        current_app.logger.info(f"🧠 Loaded {len(filtered_faces)} embeddings for class {class_id}")
-        return filtered_faces
-
-    # 🧠 Default: return all cached faces
-    current_app.logger.info(f"🧠 Loaded {len(registered_faces)} total registered embeddings")
+        return refresh_face_cache(excluded_ids)
     return registered_faces
 
 def cache_registered_faces():
@@ -265,13 +244,12 @@ def multi_face_recognize():
         data = request.get_json(silent=True) or {}
         faces = data.get("faces", [])
         class_id = data.get("class_id")
-        debug_mode = request.args.get("debug", "0") == "1"  # 🧪 toggle test mode via ?debug=1
 
         if not faces or not class_id:
             return jsonify({"error": "Missing faces or class_id"}), 400
 
         # 🔹 Call external AI recognition API
-        registered_faces = get_cached_faces(class_id)
+        registered_faces = get_cached_faces()
         payload = {"faces": faces, "registered_faces": registered_faces}
         res = requests.post(f"{HF_AI_URL}/recognize-multi", json=payload, timeout=90)
 
@@ -290,7 +268,7 @@ def multi_face_recognize():
         
         date_val = datetime.now(PH_TZ)
 
-        # 🧩 Build class data (for logging)
+        # 🧩 Build class data (with full schema matching 'classes')
         class_data = {
             "class_id": str(cls["_id"]),
             "subject_code": cls.get("subject_code", ""),
@@ -316,36 +294,76 @@ def multi_face_recognize():
             if not sid:
                 continue
 
+            # 🔎 Fetch student data
             raw_student = get_student_by_id(sid)
             if not raw_student:
                 continue
 
             student_data = {
                 "student_id": raw_student.get("student_id"),
-                "first_name": raw_student.get("first_name") or raw_student.get("First_Name", ""),
-                "last_name": raw_student.get("last_name") or raw_student.get("Last_Name", ""),
+                "first_name": raw_student.get("first_name")
+                or raw_student.get("First_Name", ""),
+                "last_name": raw_student.get("last_name")
+                or raw_student.get("Last_Name", ""),
             }
 
-            # 🕒 Determine status
+            # ✅ Check if already logged
+            if already_logged_today(sid, class_id, date_val):
+                # 🔍 Fetch existing log to display real status (not "AlreadyMarked")
+                existing_log = attendance_collection.find_one(
+                    {
+                        "class_id": class_id,
+                        "students.student_id": sid,
+                        "date": {
+                            "$gte": date_val.replace(hour=0, minute=0, second=0),
+                            "$lt": date_val.replace(hour=23, minute=59, second=59),
+                        },
+                    },
+                    {"students.$": 1}
+                )
+
+                existing_status = (
+                    existing_log["students"][0]["status"]
+                    if existing_log and "students" in existing_log
+                    else "Present"
+                )
+
+                results.append({
+                    "student_id": sid,
+                    "first_name": student_data["first_name"],
+                    "last_name": student_data["last_name"],
+                    "status": existing_status,  # 👈 Use actual recorded status
+                    "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
+                    "subject_code": class_data["subject_code"],
+                    "subject_title": class_data["subject_title"],
+                    "course": class_data["course"],
+                    "section": class_data["section"],
+                    "instructor_first_name": class_data["instructor_first_name"],
+                    "instructor_last_name": class_data["instructor_last_name"],
+                })
+                continue
+
+            # 🕒 Detect if student is late (10+ minutes after start)
             attendance_start_time = cls.get("attendance_start_time")
             if attendance_start_time:
                 try:
-                    if debug_mode:
-                        diff_minutes = 15  # force simulate 15-min late
-                        status = "Late" if diff_minutes > 10 else "Present"
-                        current_app.logger.info(f"🧪 DEBUG MODE: diff_minutes={diff_minutes} → {status}")
-                    else:
-                        start_dt = datetime.combine(date_val.date(), datetime.strptime(attendance_start_time, "%H:%M").time())
-                        diff = (date_val - start_dt).total_seconds() / 60
-                        status = "Late" if diff > 10 else "Present"
-                        current_app.logger.info(f"🕒 Actual diff_minutes={diff:.2f} → {status}")
+                    # Convert safely to datetime (handles "Z" or ISO format)
+                    class_start_dt = datetime.fromisoformat(
+                        str(attendance_start_time).replace("Z", "+00:00")
+                    )
+                    diff_minutes = (date_val - class_start_dt).total_seconds() / 60.0
+                    status = "Late" if diff_minutes > 1 else "Present"
+                    current_app.logger.info(
+                        f"🕒 Student {sid}: {diff_minutes:.1f} min difference → {status}"
+                    )
                 except Exception as e:
-                    current_app.logger.warning(f"⚠️ Time computation error: {e}")
+                    current_app.logger.warning(f"⚠️ Time parse error: {e}")
                     status = "Present"
             else:
                 status = "Present"
 
-            # ✅ Always log or update
+
+            # 📝 Log attendance normally
             log_res = log_attendance_model(
                 class_data=class_data,
                 student_data=student_data,
@@ -354,12 +372,14 @@ def multi_face_recognize():
                 class_start_time=cls.get("attendance_start_time"),
             )
 
+
             if log_res:
+                log_res["status"] = status
                 results.append({
                     "student_id": sid,
                     "first_name": student_data["first_name"],
                     "last_name": student_data["last_name"],
-                    "status": status,
+                    "status": log_res["status"],
                     "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
                     "subject_code": class_data["subject_code"],
                     "subject_title": class_data["subject_title"],
@@ -371,8 +391,9 @@ def multi_face_recognize():
                 })
 
         duration = time.time() - start_time
-        current_app.logger.info(f"✅ Multi-face logged {len(results)} students in {duration:.2f}s")
-        current_app.logger.info(f"🧾 FINAL LOGGED RESULTS → {json.dumps(results, indent=2)}")
+        current_app.logger.info(
+            f"✅ Multi-face logged {len(results)} students in {duration:.2f}s"
+        )
 
         return jsonify({
             "success": True,
