@@ -57,15 +57,35 @@ def refresh_face_cache(excluded_ids=None):
     current_app.logger.info(f"✅ Cache refreshed with {len(registered_faces)} embeddings.")
     return registered_faces
 
-
-def get_cached_faces(excluded_ids=None):
-    """Return cached embeddings or refresh if expired."""
+def get_cached_faces(class_id=None, excluded_ids=None):
+    """Return cached embeddings, optionally filtered by class_id."""
+    excluded_ids = excluded_ids or set()
     registered_faces = current_app.config.get("CACHED_FACES")
     last_update = current_app.config.get("CACHED_FACES_LAST_UPDATE", 0)
     cache_age = time.time() - last_update
 
+    # 🔄 Refresh if cache expired
     if not registered_faces or cache_age > CACHE_TTL:
-        return refresh_face_cache(excluded_ids)
+        refresh_face_cache(excluded_ids)
+        registered_faces = current_app.config["CACHED_FACES"]
+
+    # 🎯 If a class_id is given, limit to students in that class
+    if class_id:
+        cls = classes_collection.find_one({"_id": ObjectId(class_id)})
+        if not cls:
+            current_app.logger.warning(f"⚠️ No class found for ID {class_id}")
+            return []
+
+        enrolled_ids = {s["student_id"] for s in cls.get("students", [])}
+        filtered_faces = [
+            f for f in registered_faces
+            if f["user_id"] in enrolled_ids and f["user_id"] not in excluded_ids
+        ]
+        current_app.logger.info(f"🧠 Loaded {len(filtered_faces)} embeddings for class {class_id}")
+        return filtered_faces
+
+    # 🧠 Default: return all cached faces
+    current_app.logger.info(f"🧠 Loaded {len(registered_faces)} total registered embeddings")
     return registered_faces
 
 def cache_registered_faces():
@@ -249,7 +269,7 @@ def multi_face_recognize():
             return jsonify({"error": "Missing faces or class_id"}), 400
 
         # 🔹 Call external AI recognition API
-        registered_faces = get_cached_faces()
+        registered_faces = get_cached_faces(class_id)
         payload = {"faces": faces, "registered_faces": registered_faces}
         res = requests.post(f"{HF_AI_URL}/recognize-multi", json=payload, timeout=90)
 
