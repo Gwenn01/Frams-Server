@@ -114,7 +114,7 @@ def stop_session():
         # 🔹 Auto mark absentees
         today = _today_date()
         today_str = today.strftime("%Y-%m-%d")
-        today_logs = get_attendance_logs_by_class_and_date(class_id, today_str, today_str)
+        today_logs = get_attendance_logs_by_class_and_date(str(class_id), today_str, today_str)
 
         logged_ids = {
             s["student_id"] for log in today_logs for s in log.get("students", [])

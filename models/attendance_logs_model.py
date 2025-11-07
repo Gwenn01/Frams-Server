@@ -199,9 +199,11 @@ def get_attendance_logs_by_student(student_id):
             })
     return results
 
-
-
 def get_attendance_logs_by_class_and_date(class_id, start_date, end_date):
+    # 🔹 Ensure class_id is always a string for consistent matching
+    if not isinstance(class_id, str):
+        class_id = str(class_id)
+
     start = _parse_date_str(start_date)
     end = _parse_date_str(end_date)
 
@@ -221,11 +223,13 @@ def get_attendance_logs_by_class_and_date(class_id, start_date, end_date):
                 "last_name": s.get("last_name"),
                 "status": s.get("status"),
                 "time": s.get("time"),
-                "time_logged": s.get("time_logged").astimezone(PH_TZ).strftime("%H:%M:%S")
-                if isinstance(s.get("time_logged"), datetime) else s.get("time_logged")
+                "time_logged": (
+                    s.get("time_logged").astimezone(PH_TZ).strftime("%H:%M:%S")
+                    if isinstance(s.get("time_logged"), datetime)
+                    else s.get("time_logged")
+                ),
             })
     return results
-
 
 def mark_absent_bulk(class_data, date_val, student_list):
     date_val = _parse_date_str(date_val)
