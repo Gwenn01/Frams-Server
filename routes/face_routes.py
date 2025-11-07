@@ -366,18 +366,13 @@ def multi_face_recognize():
             # 🕒 Detect if student is late (10+ minutes after start)
             attendance_start_time = cls.get("attendance_start_time")
             if attendance_start_time:
+                # 🕒 DEBUG MODE: Force Late status for testing
                 try:
-                    # Convert safely to datetime (handles "Z" or ISO format)
-                    class_start_dt = datetime.fromisoformat(
-                        str(attendance_start_time).replace("Z", "+00:00")
-                    )
-                    diff_minutes = (date_val - class_start_dt).total_seconds() / 60.0
+                    diff_minutes = 15  # ⏰ pretend student is 15 minutes late
                     status = "Late" if diff_minutes > 10 else "Present"
-                    current_app.logger.info(
-                        f"🕒 Student {sid}: {diff_minutes:.1f} min difference → {status}"
-                    )
+                    current_app.logger.info(f"🧪 [TEST MODE] Forced diff_minutes={diff_minutes} → {status}")
                 except Exception as e:
-                    current_app.logger.warning(f"⚠️ Time parse error: {e}")
+                    current_app.logger.warning(f"⚠️ Test time simulation error: {e}")
                     status = "Present"
             else:
                 status = "Present"
