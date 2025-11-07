@@ -377,11 +377,11 @@ def multi_face_recognize():
             else:
                 status = "Present"
 
-
             # 📝 Log attendance normally
             log_res = log_attendance_model(
                 class_data=class_data,
                 student_data=student_data,
+                status=status, 
                 date_val=date_val,
                 class_start_time=cls.get("attendance_start_time"),
             )
