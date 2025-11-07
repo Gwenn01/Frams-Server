@@ -342,11 +342,10 @@ def multi_face_recognize():
                     {"students.$": 1}
                 )
 
-                existing_status = (
-                    existing_log["students"][0]["status"]
-                    if existing_log and "students" in existing_log
-                    else "Present"
-                )
+                if existing_log and "students" in existing_log:
+                    existing_status = existing_log["students"][0].get("status", "Present")
+                else:
+                    existing_status = status
 
                 results.append({
                     "student_id": sid,
