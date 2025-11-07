@@ -379,7 +379,7 @@ def multi_face_recognize():
                     "student_id": sid,
                     "first_name": student_data["first_name"],
                     "last_name": student_data["last_name"],
-                    "status": log_res["status"],
+                    "status": status,
                     "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
                     "subject_code": class_data["subject_code"],
                     "subject_title": class_data["subject_title"],
