@@ -309,30 +309,29 @@ def multi_face_recognize():
 
             # ✅ Check if already logged
             if already_logged_today(sid, class_id, date_val):
-                # 🔍 Fetch existing log to display real status (not "AlreadyMarked")
                 existing_log = attendance_collection.find_one(
                     {
                         "class_id": class_id,
                         "students.student_id": sid,
                         "date": {
-                            "$gte": date_val.replace(hour=0, minute=0, second=0),
-                            "$lt": date_val.replace(hour=23, minute=59, second=59),
+                            "$gte": date_val.replace(hour=0, minute=0, second=0, microsecond=0),
+                            "$lt": date_val.replace(hour=23, minute=59, second=59, microsecond=999999),
                         },
                     },
                     {"students.$": 1}
                 )
 
-                existing_status = (
-                    existing_log["students"][0]["status"]
-                    if existing_log and "students" in existing_log
-                    else "Present"
-                )
+                if existing_log and "students" in existing_log:
+                    existing_status = existing_log["students"][0].get("status", "Present")
+                else:
+                    existing_status = "Present"
 
+                # ✅ Always return what the DB says
                 results.append({
                     "student_id": sid,
                     "first_name": student_data["first_name"],
                     "last_name": student_data["last_name"],
-                    "status": existing_status,  # 👈 Use actual recorded status
+                    "status": existing_status,  # direct from DB
                     "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
                     "subject_code": class_data["subject_code"],
                     "subject_title": class_data["subject_title"],
