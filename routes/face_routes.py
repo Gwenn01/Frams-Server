@@ -301,13 +301,11 @@ def multi_face_recognize():
 
             student_data = {
                 "student_id": raw_student.get("student_id"),
-                "first_name": raw_student.get("first_name")
-                or raw_student.get("First_Name", ""),
-                "last_name": raw_student.get("last_name")
-                or raw_student.get("Last_Name", ""),
+                "first_name": raw_student.get("first_name") or raw_student.get("First_Name", ""),
+                "last_name": raw_student.get("last_name") or raw_student.get("Last_Name", ""),
             }
 
-            # ✅ Check if already logged
+            # ✅ Check if already logged for today
             if already_logged_today(sid, class_id, date_val):
                 existing_log = attendance_collection.find_one(
                     {
@@ -321,7 +319,7 @@ def multi_face_recognize():
                     {"students.$": 1}
                 )
 
-                if existing_log and "students" in existing_log:
+                if existing_log and "students" in existing_log and existing_log["students"]:
                     existing_status = existing_log["students"][0].get("status", "Present")
                 else:
                     existing_status = "Present"
@@ -331,7 +329,7 @@ def multi_face_recognize():
                     "student_id": sid,
                     "first_name": student_data["first_name"],
                     "last_name": student_data["last_name"],
-                    "status": existing_status,  # direct from DB
+                    "status": existing_status,
                     "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
                     "subject_code": class_data["subject_code"],
                     "subject_title": class_data["subject_title"],
@@ -342,11 +340,10 @@ def multi_face_recognize():
                 })
                 continue
 
-            # 🕒 Detect if student is late (10+ minutes after start)
+            # 🕒 Determine if student is late
             attendance_start_time = cls.get("attendance_start_time")
             if attendance_start_time:
                 try:
-                    # Convert safely to datetime (handles "Z" or ISO format)
                     class_start_dt = datetime.fromisoformat(
                         str(attendance_start_time).replace("Z", "+00:00")
                     )
@@ -361,9 +358,8 @@ def multi_face_recognize():
             else:
                 status = "Present"
 
-
-            # 📝 Log attendance normally
-            log_res = log_attendance_model(
+            # 📝 Log attendance
+            log_attendance_model(
                 class_data=class_data,
                 student_data=student_data,
                 status=status,
@@ -371,28 +367,42 @@ def multi_face_recognize():
                 class_start_time=cls.get("attendance_start_time"),
             )
 
+            # 🔁 Re-fetch updated record to get latest DB status
+            updated_log = attendance_collection.find_one(
+                {
+                    "class_id": class_id,
+                    "students.student_id": sid,
+                    "date": {
+                        "$gte": date_val.replace(hour=0, minute=0, second=0, microsecond=0),
+                        "$lt": date_val.replace(hour=23, minute=59, second=59, microsecond=999999),
+                    },
+                },
+                {"students.$": 1}
+            )
 
-            if log_res:
-                log_res["status"] = status
-                results.append({
-                    "student_id": sid,
-                    "first_name": student_data["first_name"],
-                    "last_name": student_data["last_name"],
-                    "status": status,
-                    "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
-                    "subject_code": class_data["subject_code"],
-                    "subject_title": class_data["subject_title"],
-                    "course": class_data["course"],
-                    "section": class_data["section"],
-                    "instructor_first_name": class_data["instructor_first_name"],
-                    "instructor_last_name": class_data["instructor_last_name"],
-                    "bbox": face.get("bbox"),
-                })
+            final_status = (
+                updated_log["students"][0].get("status", status)
+                if updated_log and "students" in updated_log and updated_log["students"]
+                else status
+            )
+
+            results.append({
+                "student_id": sid,
+                "first_name": student_data["first_name"],
+                "last_name": student_data["last_name"],
+                "status": final_status,
+                "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
+                "subject_code": class_data["subject_code"],
+                "subject_title": class_data["subject_title"],
+                "course": class_data["course"],
+                "section": class_data["section"],
+                "instructor_first_name": class_data["instructor_first_name"],
+                "instructor_last_name": class_data["instructor_last_name"],
+                "bbox": face.get("bbox"),
+            })
 
         duration = time.time() - start_time
-        current_app.logger.info(
-            f"✅ Multi-face logged {len(results)} students in {duration:.2f}s"
-        )
+        current_app.logger.info(f"✅ Multi-face logged {len(results)} students in {duration:.2f}s")
 
         return jsonify({
             "success": True,
@@ -409,4 +419,5 @@ def multi_face_recognize():
     except Exception as e:
         current_app.logger.error(f"❌ /multi-recognize error: {traceback.format_exc()}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
 
