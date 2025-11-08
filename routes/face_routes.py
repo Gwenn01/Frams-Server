@@ -265,10 +265,10 @@ def multi_face_recognize():
         cls = classes_collection.find_one({"_id": ObjectId(class_id)})
         if not cls:
             return jsonify({"error": "Class not found"}), 404
-        
+
         date_val = datetime.now(PH_TZ)
 
-        # 🧩 Build class data (with full schema matching 'classes')
+        # 🧩 Build class metadata
         class_data = {
             "class_id": str(cls["_id"]),
             "subject_code": cls.get("subject_code", ""),
@@ -294,7 +294,7 @@ def multi_face_recognize():
             if not sid:
                 continue
 
-            # 🔎 Fetch student data
+            # 🔎 Fetch student info
             raw_student = get_student_by_id(sid)
             if not raw_student:
                 continue
@@ -305,26 +305,23 @@ def multi_face_recognize():
                 "last_name": raw_student.get("last_name") or raw_student.get("Last_Name", ""),
             }
 
-            # ✅ Check if already logged for today
-            if already_logged_today(sid, class_id, date_val):
-                existing_log = attendance_collection.find_one(
-                    {
-                        "class_id": class_id,
-                        "students.student_id": sid,
-                        "date": {
-                            "$gte": date_val.replace(hour=0, minute=0, second=0, microsecond=0),
-                            "$lt": date_val.replace(hour=23, minute=59, second=59, microsecond=999999),
-                        },
+            # ✅ Always check if the student is already logged today
+            existing_log = attendance_collection.find_one(
+                {
+                    "class_id": class_id,
+                    "students.student_id": sid,
+                    "date": {
+                        "$gte": date_val.replace(hour=0, minute=0, second=0, microsecond=0),
+                        "$lt": date_val.replace(hour=23, minute=59, second=59, microsecond=999999),
                     },
-                    {"students.$": 1}
-                )
+                },
+                {"students.$": 1}
+            )
 
-                if existing_log and "students" in existing_log and existing_log["students"]:
-                    existing_status = existing_log["students"][0].get("status", "Present")
-                else:
-                    existing_status = "Present"
+            # 🟡 If already logged, always use DB status (never recompute)
+            if existing_log and "students" in existing_log and existing_log["students"]:
+                existing_status = existing_log["students"][0].get("status", "Present")
 
-                # ✅ Always return what the DB says
                 results.append({
                     "student_id": sid,
                     "first_name": student_data["first_name"],
@@ -340,7 +337,7 @@ def multi_face_recognize():
                 })
                 continue
 
-            # 🕒 Determine if student is late
+            # 🕒 Only compute "Late"/"Present" for first detection
             attendance_start_time = cls.get("attendance_start_time")
             if attendance_start_time:
                 try:
@@ -358,7 +355,7 @@ def multi_face_recognize():
             else:
                 status = "Present"
 
-            # 📝 Log attendance
+            # 📝 Log attendance entry
             log_attendance_model(
                 class_data=class_data,
                 student_data=student_data,
@@ -367,7 +364,7 @@ def multi_face_recognize():
                 class_start_time=cls.get("attendance_start_time"),
             )
 
-            # 🔁 Re-fetch updated record to get latest DB status
+            # 🔁 Fetch newly inserted record to ensure correct DB value
             updated_log = attendance_collection.find_one(
                 {
                     "class_id": class_id,
