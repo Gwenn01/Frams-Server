@@ -353,6 +353,7 @@ def last_student():
             "last_name": student.get("Last_Name") or student.get("last_name"),
             "created_at": student.get("created_at"),
         }
+    )
 
 from flask import jsonify, request
 from datetime import datetime, timezone
