@@ -249,7 +249,7 @@ def multi_face_recognize():
             return jsonify({"error": "Missing faces or class_id"}), 400
 
         # 🔹 Call external AI recognition API
-        registered_faces = get_cached_faces()
+        registered_faces = get_cached_faces(class_id)
         payload = {"faces": faces, "registered_faces": registered_faces}
         res = requests.post(f"{HF_AI_URL}/recognize-multi", json=payload, timeout=90)
 
