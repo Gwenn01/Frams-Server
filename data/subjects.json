@@ -1,0 +1,310 @@
+[
+  {
+    "subject_code": "CC101",
+    "subject_title": "Introduction to Computing",
+    "course": "BSINFOTECH",
+    "year_level": "1st Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "HCI 101",
+    "subject_title": "Introduction to Human Computer Interaction",
+    "course": "BSINFOTECH",
+    "year_level": "1st Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "CC102",
+    "subject_title": "Computer Programming I",
+    "course": "BSINFOTECH",
+    "year_level": "1st Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "ITES 102",
+    "subject_title": "Computer Hardware System",
+    "course": "BSINFOTECH",
+    "year_level": "1st Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "ITE 1",
+    "subject_title": "IT Elective 1- Web Systems and Technologies",
+    "course": "BSINFOTECH",
+    "year_level": "2nd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "CC 103",
+    "subject_title": "Computer Programming II",
+    "course": "BSINFOTECH",
+    "year_level": "2nd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "CC 105",
+    "subject_title": "Information Management",
+    "course": "BSINFOTECH",
+    "year_level": "2nd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "ITE 2",
+    "subject_title": "IT Elective 2-Object-Oriented Programming",
+    "course": "BSINFOTECH",
+    "year_level": "2nd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "CC 104",
+    "subject_title": "Data Structures and Algorithms",
+    "course": "BSINFOTECH",
+    "year_level": "2nd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "ITP",
+    "subject_title": "Integrative Programming Technologies 1",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "PF 102",
+    "subject_title": "Event Driven Programming",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "ITE 3",
+    "subject_title": "IT Elective 3-Platform Technologies",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "GDDAT",
+    "subject_title": "Game Development and Digital Animation Technologies",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "IM 101",
+    "subject_title": "Advance Database Systems",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "ITE 4",
+    "subject_title": "IT Elective 4-Artificial Intelligence",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "IAS 101",
+    "subject_title": "Information Assurance and Security",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "NET 101",
+    "subject_title": "Networking I",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "CC 106",
+    "subject_title": "Applications Development and Emerging Technologies",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "SIA 101",
+    "subject_title": "Systems Integration and Architecture I",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "NET 102",
+    "subject_title": "Networking II",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "Summer"
+  },
+  {
+    "subject_code": "SP 101",
+    "subject_title": "Social and Professional Issues",
+    "course": "BSINFOTECH",
+    "year_level": "3rd Year",
+    "semester": "Summer"
+  },
+  {
+    "subject_code": "SA 101",
+    "subject_title": "Systems Administration and Maintenance",
+    "course": "BSINFOTECH",
+    "year_level": "4th Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "CC101",
+    "subject_title": "Introduction to Computing",
+    "course": "BSCS",
+    "year_level": "1st Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "CC102",
+    "subject_title": "Computer Programming I",
+    "course": "BSCS",
+    "year_level": "1st Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "CSE 1",
+    "subject_title": "CS Elective I",
+    "course": "BSCS",
+    "year_level": "2nd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "CC 103",
+    "subject_title": "Computer Programming II",
+    "course": "BSCS",
+    "year_level": "2nd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "CC 104",
+    "subject_title": "Data Structures and Algorithms",
+    "course": "BSCS",
+    "year_level": "2nd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "CC 106",
+    "subject_title": "Applications Development and Emerging Technologies",
+    "course": "BSCS",
+    "year_level": "2nd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "SDF 104",
+    "subject_title": "Object-Oriented Programming",
+    "course": "BSCS",
+    "year_level": "2nd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "CC 106",
+    "subject_title": "Applications Development and Emerging Technologies",
+    "course": "BSCS",
+    "year_level": "2nd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "CC 105",
+    "subject_title": "Information Management",
+    "course": "BSCS",
+    "year_level": "3rd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "SE 101",
+    "subject_title": "Software Engineering I",
+    "course": "BSCS",
+    "year_level": "3rd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "CSE 2",
+    "subject_title": "CS Elective II",
+    "course": "BSCS",
+    "year_level": "3rd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "NC 101",
+    "subject_title": "Networks and Communications",
+    "course": "BSCS",
+    "year_level": "3rd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "AL 101",
+    "subject_title": "Algorithms and Complexity",
+    "course": "BSCS",
+    "year_level": "3rd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "AR 101",
+    "subject_title": "Architecture and Organization",
+    "course": "BSCS",
+    "year_level": "3rd Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "PL 101",
+    "subject_title": "Programming Languages",
+    "course": "BSCS",
+    "year_level": "3rd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "OS 101",
+    "subject_title": "Operating Systems",
+    "course": "BSCS",
+    "year_level": "3rd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "SE 102",
+    "subject_title": "Software Engineering II",
+    "course": "BSCS",
+    "year_level": "3rd Year",
+    "semester": "2nd Sem"
+  },
+  {
+    "subject_code": "AL 102",
+    "subject_title": "Automata Theory and Formal Languages",
+    "course": "BSCS",
+    "year_level": "4th Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "IAS 101",
+    "subject_title": "Information Assurance and Security",
+    "course": "BSCS",
+    "year_level": "4th Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "HCI 101",
+    "subject_title": "Introduction to Human Computer Interaction",
+    "course": "BSCS",
+    "year_level": "4th Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "SP 101",
+    "subject_title": "Social Issues and Professional Practice",
+    "course": "BSCS",
+    "year_level": "4th Year",
+    "semester": "1st Sem"
+  },
+  {
+    "subject_code": "CSE 3",
+    "subject_title": "CS Elective III",
+    "course": "BSCS",
+    "year_level": "4th Year",
+    "semester": "1st Sem"
+  }
+]

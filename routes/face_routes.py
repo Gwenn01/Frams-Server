@@ -124,11 +124,9 @@ def register_auto():
                 "$setOnInsert": {
                     "student_id": student_id,
                     "First_Name": data.get("First_Name"),
+                    "Middle_Name": data.get("Middle_Name"),
                     "Last_Name": data.get("Last_Name"),
-                    "Course": data.get("Course"),
-                    "Email": data.get("Email"),
-                    "Contact_Number": data.get("Contact_Number"),
-                    "Subjects": data.get("Subjects", []),
+                    "Suffix": data.get("Suffix"),
                     "registered": False,
                     "created_at": datetime.utcnow(),
                 }
@@ -140,12 +138,9 @@ def register_auto():
         update_fields = {
             "student_id": student_id,
             "First_Name": data.get("First_Name") or student_doc.get("First_Name"),
+            "Middle_Name": data.get("Middle_Name") or student_doc.get("Middle_Name"),
             "Last_Name": data.get("Last_Name") or student_doc.get("Last_Name"),
-            "Course": data.get("Course") or student_doc.get("Course"),
-            "Section": data.get("Section") or student_doc.get("Section"),
-            "Email": data.get("Email") or student_doc.get("Email"),
-            "Contact_Number": data.get("Contact_Number") or student_doc.get("Contact_Number"),
-            "Subjects": data.get("Subjects") or student_doc.get("Subjects"),
+            "Suffix": data.get("Suffix") or student_doc.get("Suffix"),
             "registered": True,
             "embeddings": normalized_embeddings,
             "updated_at": datetime.utcnow(),

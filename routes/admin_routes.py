@@ -76,16 +76,36 @@ def register_admin():
     user_id = (data.get("user_id") or "").strip()
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
+    program = (data.get("program") or "").strip().upper()  # ✅ Added
 
-    if not all([first_name, last_name, user_id, email, password]):
+    # -------------------------------
+    # Validate required fields
+    # -------------------------------
+    if not all([first_name, last_name, user_id, email, password, program]):
         return jsonify({"error": "Missing required fields"}), 400
+
     if len(password) < 6:
         return jsonify({"error": "Password must be at least 6 characters."}), 400
+
+    if program not in ["BSINFOTECH", "BSCS"]:
+        return jsonify({"error": "Invalid program. Only BSINFOTECH or BSCS allowed."}), 400
+
     if find_admin_by_user_id(user_id):
         return jsonify({"error": "User ID already exists"}), 409
+
     if find_admin_by_email(email):
         return jsonify({"error": "Email already exists"}), 409
 
+    # -------------------------------
+    # Enforce only one admin per program
+    # -------------------------------
+    existing_admin = db["admins"].find_one({"program": program})
+    if existing_admin:
+        return jsonify({"error": f"An admin account for {program} already exists."}), 409
+
+    # -------------------------------
+    # Save admin data
+    # -------------------------------
     hashed_password = generate_password_hash(password)
     full_name = f"{first_name} {last_name}".strip()
 
@@ -96,11 +116,13 @@ def register_admin():
         "user_id": user_id,
         "email": email,
         "password": hashed_password,
+        "program": program,  # ✅ Added field
         "created_at": datetime.utcnow(),
     }
 
     create_admin(admin_data)
-    return jsonify({"message": "Admin registered successfully"}), 201
+
+    return jsonify({"message": f"Admin for {program} registered successfully"}), 201
 
 # =========================================
 # ✅ Auth: Login
@@ -111,34 +133,52 @@ def login_admin():
     user_id = (data.get("user_id") or "").strip()
     password = data.get("password") or ""
 
+    # -------------------------------
+    # Validate inputs
+    # -------------------------------
+    if not user_id or not password:
+        return jsonify({"error": "User ID and password are required."}), 400
+
     admin = find_admin_by_user_id(user_id)
     if not admin:
         return jsonify({"error": "Invalid User ID"}), 401
+
     if not check_password_hash(admin["password"], password):
         return jsonify({"error": "Incorrect password"}), 401
 
+    program = admin.get("program", "N/A")  # ✅ Include program if available
+
+    # -------------------------------
+    # Create JWT token
+    # -------------------------------
     token = jwt.encode(
         {
             "user_id": user_id,
             "role": "admin",
+            "program": program,  # ✅ Include in token payload
             "exp": datetime.utcnow() + timedelta(hours=12),
         },
         secret_key,
         algorithm="HS256",
     )
 
+    # -------------------------------
+    # Return response
+    # -------------------------------
     return jsonify(
         {
             "token": token,
-            "message": "Login successful",
+            "message": f"Login successful ({program})",
             "admin": {
                 "user_id": admin.get("user_id"),
                 "first_name": admin.get("first_name"),
                 "last_name": admin.get("last_name"),
                 "email": admin.get("email"),
+                "program": program,  # ✅ Added here
             },
         }
     ), 200
+
 
 # ==============================
 # ✅ Admin Overview Endpoints
