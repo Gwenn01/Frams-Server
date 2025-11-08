@@ -192,6 +192,8 @@ def get_stats():
     query = {"date": today}
     if program:
         query["$or"] = [
+            {"course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"Course": {"$regex": f"^{program}$", "$options": "i"}},
             {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
             {"students.Course": {"$regex": f"^{program}$", "$options": "i"}}
         ]
@@ -199,13 +201,8 @@ def get_stats():
     for log in attendance_logs_col.find(query):
         attendance_today += len(log.get("students", []))
 
-    # 🧩 Students, Instructors, Classes filtered by course (case-insensitive)
+    # 🧩 Students and Classes filtered by course (case-insensitive)
     student_filter = {"$or": [
-        {"course": {"$regex": f"^{program}$", "$options": "i"}},
-        {"Course": {"$regex": f"^{program}$", "$options": "i"}}
-    ]} if program else {}
-
-    instructor_filter = {"$or": [
         {"course": {"$regex": f"^{program}$", "$options": "i"}},
         {"Course": {"$regex": f"^{program}$", "$options": "i"}}
     ]} if program else {}
@@ -215,15 +212,18 @@ def get_stats():
         {"Course": {"$regex": f"^{program}$", "$options": "i"}}
     ]} if program else {}
 
+    # 🧩 Instructors — fetch ALL instructors (not filtered by program)
+    total_instructors = instructors_col.count_documents({})
+
+    # ✅ Return compiled overview
     return jsonify(
         {
             "total_students": students_col.count_documents(student_filter),
-            "total_instructors": instructors_col.count_documents(instructor_filter),
+            "total_instructors": total_instructors,
             "total_classes": classes_col.count_documents(class_filter),
             "attendance_today": attendance_today,
         }
     )
-
 
 @admin_bp.route("/api/admin/overview/attendance-distribution", methods=["GET"])
 def attendance_distribution():
