@@ -375,6 +375,7 @@ def mark_excused():
 
         # Parse date
         date_val = _parse_date(date_str)
+        date_str = date_val.strftime("%Y-%m-%d")
 
         # ✅ Connect to your real collection
         attendance_logs = db["attendance_logs"]
@@ -411,4 +412,5 @@ def mark_excused():
         import traceback
         print("❌ Error in /mark-excused:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
+
 
