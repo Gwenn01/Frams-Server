@@ -187,19 +187,33 @@ def get_stats():
     program = request.args.get("program")  # e.g. BSINFOTECH / BSCS
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
-    # 🧩 Attendance logs filtered by course
+    # 🧩 Attendance logs filtered by course (handles both 'course' and 'Course')
     attendance_today = 0
     query = {"date": today}
     if program:
-        query["students.course"] = program
+        query["$or"] = [
+            {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}}
+        ]
 
     for log in attendance_logs_col.find(query):
         attendance_today += len(log.get("students", []))
 
-    # 🧩 Students, Instructors, Classes filtered by course
-    student_filter = {"course": program} if program else {}
-    instructor_filter = {"course": program} if program else {}
-    class_filter = {"course": program} if program else {}
+    # 🧩 Students, Instructors, Classes filtered by course (case-insensitive)
+    student_filter = {"$or": [
+        {"course": {"$regex": f"^{program}$", "$options": "i"}},
+        {"Course": {"$regex": f"^{program}$", "$options": "i"}}
+    ]} if program else {}
+
+    instructor_filter = {"$or": [
+        {"course": {"$regex": f"^{program}$", "$options": "i"}},
+        {"Course": {"$regex": f"^{program}$", "$options": "i"}}
+    ]} if program else {}
+
+    class_filter = {"$or": [
+        {"course": {"$regex": f"^{program}$", "$options": "i"}},
+        {"Course": {"$regex": f"^{program}$", "$options": "i"}}
+    ]} if program else {}
 
     return jsonify(
         {
@@ -215,8 +229,13 @@ def get_stats():
 def attendance_distribution():
     program = request.args.get("program")
 
-    # Match only attendance logs that include students from that course
-    match_stage = {"$match": {"students.course": program}} if program else {}
+    # Match only attendance logs that include students from that course (case-insensitive)
+    match_stage = {"$match": {
+        "$or": [
+            {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}}
+        ]
+    }} if program else {}
 
     pipeline = []
     if match_stage:
@@ -255,7 +274,10 @@ def attendance_trend():
 
         query = {"date": d_str}
         if program:
-            query["students.course"] = program
+            query["$or"] = [
+                {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
+                {"students.Course": {"$regex": f"^{program}$", "$options": "i"}}
+            ]
 
         day_total = 0
         for log in attendance_logs_col.find(query):
@@ -272,7 +294,10 @@ def recent_logs():
 
     query = {}
     if program:
-        query["students.course"] = program
+        query["$or"] = [
+            {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}}
+        ]
 
     docs = list(attendance_logs_col.find(query).sort("date", -1).limit(20))
     flattened = []
@@ -287,8 +312,9 @@ def recent_logs():
         )
 
         for stu in log.get("students", []):
-            # Filter by student course in each student record
-            if program and stu.get("course") != program:
+            # Filter by student course (handles both 'course' and 'Course')
+            student_course = stu.get("course") or stu.get("Course")
+            if program and not re.match(f"^{program}$", str(student_course or ""), re.I):
                 continue
 
             flattened.append(
@@ -311,7 +337,10 @@ def recent_logs():
 @admin_bp.route("/api/admin/overview/last-student", methods=["GET"])
 def last_student():
     program = request.args.get("program")
-    query = {"course": program} if program else {}
+    query = {"$or": [
+        {"course": {"$regex": f"^{program}$", "$options": "i"}},
+        {"Course": {"$regex": f"^{program}$", "$options": "i"}}
+    ]} if program else {}
 
     student = students_col.find_one(query, sort=[("created_at", -1)])
     if not student:
@@ -324,7 +353,6 @@ def last_student():
             "last_name": student.get("Last_Name") or student.get("last_name"),
             "created_at": student.get("created_at"),
         }
-    )
 
 from flask import jsonify, request
 from datetime import datetime, timezone
