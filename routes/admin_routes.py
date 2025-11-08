@@ -6,6 +6,8 @@ import os
 from bson import ObjectId
 from config.db_config import db
 from models.admin_model import find_admin_by_user_id, find_admin_by_email, create_admin
+import re
+from flask_jwt_extended import jwt_required, get_jwt_identity
 
 admin_bp = Blueprint("admin_bp", __name__)
 secret_key = os.getenv("JWT_SECRET", os.getenv("JWT_SECRET_KEY", "yoursecretkey"))
@@ -362,12 +364,25 @@ from datetime import datetime, timezone
 # ✅ Student Management
 # ==============================
 
-# 📌 GET ALL STUDENTS
+# 📌 GET ALL STUDENTS — Filtered by Admin’s Program
 @admin_bp.route("/api/admin/students", methods=["GET"])
+@jwt_required()
 def get_all_students():
+    identity = get_jwt_identity()
+    program = identity.get("program") if isinstance(identity, dict) else None
+
+    # 🧩 Ensure program filter (e.g., BSINFOTECH / BSCS)
+    course_filter = {}
+    if program:
+        course_filter["$or"] = [
+            {"Course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"course": {"$regex": f"^{program}$", "$options": "i"}},
+        ]
+
+    # 🧩 Fetch students only from that course
     students = list(
         students_col.find(
-            {},
+            course_filter,
             {
                 "_id": 0,
                 "student_id": 1,
@@ -385,7 +400,7 @@ def get_all_students():
     for s in students:
         sid = s.get("student_id")
 
-        # ✅ count attendance across attendance_logs.students array
+        # ✅ Count attendance across attendance_logs.students array
         pipeline = [
             {"$unwind": "$students"},
             {"$match": {"students.student_id": sid}},
@@ -393,20 +408,16 @@ def get_all_students():
                 "$group": {
                     "_id": "$students.student_id",
                     "present": {
-                        "$sum": {
-                            "$cond": [{"$eq": ["$students.status", "Present"]}, 1, 0]
-                        }
+                        "$sum": {"$cond": [{"$eq": ["$students.status", "Present"]}, 1, 0]}
                     },
                     "late": {
-                        "$sum": {
-                            "$cond": [{"$eq": ["$students.status", "Late"]}, 1, 0]
-                        }
+                        "$sum": {"$cond": [{"$eq": ["$students.status", "Late"]}, 1, 0]}
                     },
                     "total": {"$sum": 1},
                 }
             },
         ]
-        agg = list(attendance_logs_col.aggregate(pipeline))  # ✅ fixed
+        agg = list(attendance_logs_col.aggregate(pipeline))
 
         if agg:
             present = agg[0]["present"]
@@ -430,16 +441,30 @@ def get_all_students():
                 "attendance_rate": attendance_rate,
             }
         )
+
     return jsonify(normalized), 200
 
 
-# 📌 GET SINGLE STUDENT
+# 📌 GET SINGLE STUDENT — Still Accessible, But Check Program Match
 @admin_bp.route("/api/admin/students/<student_id>", methods=["GET"])
+@jwt_required()
 def get_student(student_id):
-    student = students_col.find_one({"student_id": student_id})
-    if not student:
-        return jsonify({"error": "Student not found"}), 404
+    identity = get_jwt_identity()
+    program = identity.get("program") if isinstance(identity, dict) else None
 
+    # 🧩 Only fetch student within admin’s program
+    query = {"student_id": student_id}
+    if program:
+        query["$or"] = [
+            {"Course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"course": {"$regex": f"^{program}$", "$options": "i"}},
+        ]
+
+    student = students_col.find_one(query)
+    if not student:
+        return jsonify({"error": "Student not found or not in your program"}), 404
+
+    # ✅ Compute attendance stats
     pipeline = [
         {"$unwind": "$students"},
         {"$match": {"students.student_id": student_id}},
@@ -447,20 +472,16 @@ def get_student(student_id):
             "$group": {
                 "_id": "$students.student_id",
                 "present": {
-                    "$sum": {
-                        "$cond": [{"$eq": ["$students.status", "Present"]}, 1, 0]
-                    }
+                    "$sum": {"$cond": [{"$eq": ["$students.status", "Present"]}, 1, 0]}
                 },
                 "late": {
-                    "$sum": {
-                        "$cond": [{"$eq": ["$students.status", "Late"]}, 1, 0]
-                    }
+                    "$sum": {"$cond": [{"$eq": ["$students.status", "Late"]}, 1, 0]}
                 },
                 "total": {"$sum": 1},
             }
         },
     ]
-    agg = list(attendance_logs_col.aggregate(pipeline))  # ✅ fixed
+    agg = list(attendance_logs_col.aggregate(pipeline))
 
     if agg:
         present = agg[0]["present"]
@@ -484,7 +505,6 @@ def get_student(student_id):
             "attendance_rate": attendance_rate,
         }
     ), 200
-
 
 # 📌 UPDATE STUDENT
 @admin_bp.route("/api/admin/students/<student_id>", methods=["PUT"])
