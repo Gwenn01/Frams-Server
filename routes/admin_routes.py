@@ -229,11 +229,13 @@ def get_stats():
 def attendance_distribution():
     program = request.args.get("program")
 
-    # Match only attendance logs that include students from that course (case-insensitive)
+    # Match logs by course at root or inside students array
     match_stage = {"$match": {
         "$or": [
+            {"course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"Course": {"$regex": f"^{program}$", "$options": "i"}},
             {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
-            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}}
+            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}},
         ]
     }} if program else {}
 
@@ -260,7 +262,6 @@ def attendance_distribution():
 
     return jsonify({"present": present, "late": late, "absent": absent})
 
-
 @admin_bp.route("/api/admin/overview/attendance-trend", methods=["GET"])
 def attendance_trend():
     program = request.args.get("program")
@@ -272,11 +273,14 @@ def attendance_trend():
         d = end_date - timedelta(days=(days - 1 - i))
         d_str = d.strftime("%Y-%m-%d")
 
+        # Match by date and program at root or inside students
         query = {"date": d_str}
         if program:
             query["$or"] = [
+                {"course": {"$regex": f"^{program}$", "$options": "i"}},
+                {"Course": {"$regex": f"^{program}$", "$options": "i"}},
                 {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
-                {"students.Course": {"$regex": f"^{program}$", "$options": "i"}}
+                {"students.Course": {"$regex": f"^{program}$", "$options": "i"}},
             ]
 
         day_total = 0
@@ -286,17 +290,19 @@ def attendance_trend():
 
     return jsonify(trend)
 
-
 @admin_bp.route("/api/admin/overview/recent-logs", methods=["GET"])
 def recent_logs():
     program = request.args.get("program")
     limit = int(request.args.get("limit", 5))
 
+    # Match both root and nested course fields
     query = {}
     if program:
         query["$or"] = [
+            {"course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"Course": {"$regex": f"^{program}$", "$options": "i"}},
             {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
-            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}}
+            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}},
         ]
 
     docs = list(attendance_logs_col.find(query).sort("date", -1).limit(20))
@@ -312,11 +318,6 @@ def recent_logs():
         )
 
         for stu in log.get("students", []):
-            # Filter by student course (handles both 'course' and 'Course')
-            student_course = stu.get("course") or stu.get("Course")
-            if program and not re.match(f"^{program}$", str(student_course or ""), re.I):
-                continue
-
             flattened.append(
                 {
                     "student": {
@@ -332,7 +333,6 @@ def recent_logs():
 
     flattened.sort(key=lambda x: str(x.get("timestamp") or ""), reverse=True)
     return jsonify(flattened[:limit])
-
 
 @admin_bp.route("/api/admin/overview/last-student", methods=["GET"])
 def last_student():
