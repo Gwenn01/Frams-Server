@@ -354,3 +354,61 @@ def mark_absent():
         import traceback
         print("❌ Error in /mark-absent:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
+    
+# ✅ Mark a student as Excused (Instructor action)
+@attendance_bp.route("/mark-excused", methods=["POST"])
+def mark_excused():
+    """
+    Instructor marks a student as Excused for a specific date.
+    Updates the 'students' subdocument inside attendance_logs.
+    """
+    try:
+        data = request.get_json(force=True)
+        student_id = data.get("student_id")
+        class_id = data.get("class_id")
+        date_str = data.get("date")
+        reason = data.get("reason", "")
+        instructor_id = data.get("instructor_id", "Unknown")
+
+        if not all([student_id, class_id, date_str]):
+            return jsonify({"error": "Missing required fields"}), 400
+
+        # Parse date
+        date_val = _parse_date(date_str)
+
+        # ✅ Connect to your real collection
+        attendance_logs = db["attendance_logs"]
+
+        # 🧠 Find the correct document
+        result = attendance_logs.update_one(
+            {
+                "class_id": class_id,
+                "students.student_id": student_id,
+                "date": date_str,
+            },
+            {
+                "$set": {
+                    "students.$.status": "Excused",
+                    "students.$.excuse_reason": reason,
+                    "students.$.updated_by": instructor_id,
+                    "students.$.updated_at": datetime.now(PH_TZ),
+                }
+            }
+        )
+
+        if result.modified_count == 0:
+            return jsonify({"error": "No matching record found"}), 404
+
+        return jsonify({
+            "success": True,
+            "message": f"Student {student_id} marked as Excused.",
+            "student_id": student_id,
+            "class_id": class_id,
+            "reason": reason
+        }), 200
+
+    except Exception:
+        import traceback
+        print("❌ Error in /mark-excused:", traceback.format_exc())
+        return jsonify({"error": "Internal server error"}), 500
+

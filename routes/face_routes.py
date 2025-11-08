@@ -345,7 +345,7 @@ def multi_face_recognize():
                         str(attendance_start_time).replace("Z", "+00:00")
                     )
                     diff_minutes = (date_val - class_start_dt).total_seconds() / 60.0
-                    status = "Late" if diff_minutes > 1 else "Present"
+                    status = "Late" if diff_minutes > 15 else "Present"
                     current_app.logger.info(
                         f"🕒 Student {sid}: {diff_minutes:.1f} min difference → {status}"
                     )
