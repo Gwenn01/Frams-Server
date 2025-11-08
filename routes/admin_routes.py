@@ -179,37 +179,52 @@ def login_admin():
         }
     ), 200
 
-
 # ==============================
 # ✅ Admin Overview Endpoints
 # ==============================
 @admin_bp.route("/api/admin/overview/stats", methods=["GET"])
 def get_stats():
-    today = datetime.utcnow().strftime("%Y-%m-%d") 
+    program = request.args.get("program")  # 🟢 get program from query param
+    today = datetime.utcnow().strftime("%Y-%m-%d")
     attendance_today = 0
-    for log in attendance_logs_col.find({"date": today}):
+
+    query = {"date": today}
+    if program:
+        query["program"] = program
+
+    for log in attendance_logs_col.find(query):
         attendance_today += len(log.get("students", []))
+
+    student_filter = {"program": program} if program else {}
+    instructor_filter = {"program": program} if program else {}
+    class_filter = {"program": program} if program else {}
 
     return jsonify(
         {
-            "total_students": students_col.count_documents({}),
-            "total_instructors": instructors_col.count_documents({}),
-            "total_classes": classes_col.count_documents({}),
+            "total_students": students_col.count_documents(student_filter),
+            "total_instructors": instructors_col.count_documents(instructor_filter),
+            "total_classes": classes_col.count_documents(class_filter),
             "attendance_today": attendance_today,
         }
     )
 
+
 @admin_bp.route("/api/admin/overview/attendance-distribution", methods=["GET"])
 def attendance_distribution():
-    pipeline = [
+    program = request.args.get("program")
+    match_stage = {"$match": {"program": program}} if program else {}
+
+    pipeline = []
+    if match_stage:
+        pipeline.append(match_stage)
+
+    pipeline += [
         {"$unwind": "$students"},
-        {"$group": {
-            "_id": "$students.status",
-            "count": {"$sum": 1}
-        }}
+        {"$group": {"_id": "$students.status", "count": {"$sum": 1}}},
     ]
+
     result = list(attendance_logs_col.aggregate(pipeline))
-    
+
     present = late = absent = 0
     for r in result:
         status = (r["_id"] or "").strip().lower()
@@ -220,31 +235,40 @@ def attendance_distribution():
         elif status == "absent":
             absent = r["count"]
 
-    return jsonify({
-        "present": present,
-        "late": late,
-        "absent": absent
-    })
+    return jsonify({"present": present, "late": late, "absent": absent})
+
 
 @admin_bp.route("/api/admin/overview/attendance-trend", methods=["GET"])
 def attendance_trend():
+    program = request.args.get("program")
     days = int(request.args.get("days", 7))
-    end_date = datetime.utcnow().date()  
+    end_date = datetime.utcnow().date()
     trend = []
+
     for i in range(days):
         d = end_date - timedelta(days=(days - 1 - i))
         d_str = d.strftime("%Y-%m-%d")
+        query = {"date": d_str}
+        if program:
+            query["program"] = program
+
         day_total = 0
-        for log in attendance_logs_col.find({"date": d_str}):
+        for log in attendance_logs_col.find(query):
             day_total += len(log.get("students", []))
         trend.append({"date": d_str, "count": day_total})
+
     return jsonify(trend)
+
 
 @admin_bp.route("/api/admin/overview/recent-logs", methods=["GET"])
 def recent_logs():
+    program = request.args.get("program")
     limit = int(request.args.get("limit", 5))
-    docs = list(attendance_logs_col.find().sort("date", -1).limit(20))
+    query = {"program": program} if program else {}
+
+    docs = list(attendance_logs_col.find(query).sort("date", -1).limit(20))
     flattened = []
+
     for log in docs:
         subject_title = log.get("subject_title")
         subject_code = log.get("subject_code")
@@ -257,10 +281,8 @@ def recent_logs():
             flattened.append(
                 {
                     "student": {
-                        "first_name": stu.get("first_name")
-                        or stu.get("First_Name"),
-                        "last_name": stu.get("last_name")
-                        or stu.get("Last_Name"),
+                        "first_name": stu.get("first_name") or stu.get("First_Name"),
+                        "last_name": stu.get("last_name") or stu.get("Last_Name"),
                         "student_id": stu.get("student_id"),
                     },
                     "subject": subject,
@@ -268,21 +290,25 @@ def recent_logs():
                     "timestamp": stu.get("time_logged") or log.get("date"),
                 }
             )
+
     flattened.sort(key=lambda x: str(x.get("timestamp") or ""), reverse=True)
     return jsonify(flattened[:limit])
 
+
 @admin_bp.route("/api/admin/overview/last-student", methods=["GET"])
 def last_student():
-    student = students_col.find_one(sort=[("created_at", -1)])
+    program = request.args.get("program")
+    query = {"program": program} if program else {}
+
+    student = students_col.find_one(query, sort=[("created_at", -1)])
     if not student:
         return jsonify(None)
+
     return jsonify(
         {
             "student_id": student.get("student_id"),
-            "first_name": student.get("First_Name")
-            or student.get("first_name"),
-            "last_name": student.get("Last_Name")
-            or student.get("last_name"),
+            "first_name": student.get("First_Name") or student.get("first_name"),
+            "last_name": student.get("Last_Name") or student.get("last_name"),
             "created_at": student.get("created_at"),
         }
     )
