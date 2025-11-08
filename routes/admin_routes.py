@@ -184,20 +184,22 @@ def login_admin():
 # ==============================
 @admin_bp.route("/api/admin/overview/stats", methods=["GET"])
 def get_stats():
-    program = request.args.get("program")  # 🟢 get program from query param
+    program = request.args.get("program")  # e.g. BSINFOTECH / BSCS
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    attendance_today = 0
 
+    # 🧩 Attendance logs filtered by course
+    attendance_today = 0
     query = {"date": today}
     if program:
-        query["program"] = program
+        query["students.course"] = program
 
     for log in attendance_logs_col.find(query):
         attendance_today += len(log.get("students", []))
 
-    student_filter = {"program": program} if program else {}
-    instructor_filter = {"program": program} if program else {}
-    class_filter = {"program": program} if program else {}
+    # 🧩 Students, Instructors, Classes filtered by course
+    student_filter = {"course": program} if program else {}
+    instructor_filter = {"course": program} if program else {}
+    class_filter = {"course": program} if program else {}
 
     return jsonify(
         {
@@ -212,7 +214,9 @@ def get_stats():
 @admin_bp.route("/api/admin/overview/attendance-distribution", methods=["GET"])
 def attendance_distribution():
     program = request.args.get("program")
-    match_stage = {"$match": {"program": program}} if program else {}
+
+    # Match only attendance logs that include students from that course
+    match_stage = {"$match": {"students.course": program}} if program else {}
 
     pipeline = []
     if match_stage:
@@ -248,9 +252,10 @@ def attendance_trend():
     for i in range(days):
         d = end_date - timedelta(days=(days - 1 - i))
         d_str = d.strftime("%Y-%m-%d")
+
         query = {"date": d_str}
         if program:
-            query["program"] = program
+            query["students.course"] = program
 
         day_total = 0
         for log in attendance_logs_col.find(query):
@@ -264,7 +269,10 @@ def attendance_trend():
 def recent_logs():
     program = request.args.get("program")
     limit = int(request.args.get("limit", 5))
-    query = {"program": program} if program else {}
+
+    query = {}
+    if program:
+        query["students.course"] = program
 
     docs = list(attendance_logs_col.find(query).sort("date", -1).limit(20))
     flattened = []
@@ -277,7 +285,12 @@ def recent_logs():
             if subject_code and subject_title
             else (subject_title or subject_code)
         )
+
         for stu in log.get("students", []):
+            # Filter by student course in each student record
+            if program and stu.get("course") != program:
+                continue
+
             flattened.append(
                 {
                     "student": {
@@ -298,7 +311,7 @@ def recent_logs():
 @admin_bp.route("/api/admin/overview/last-student", methods=["GET"])
 def last_student():
     program = request.args.get("program")
-    query = {"program": program} if program else {}
+    query = {"course": program} if program else {}
 
     student = students_col.find_one(query, sort=[("created_at", -1)])
     if not student:
