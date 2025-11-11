@@ -1,13 +1,11 @@
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
-import jwt
 from datetime import datetime, timedelta, date
 import os
 from bson import ObjectId
 from config.db_config import db
 from models.admin_model import find_admin_by_user_id, find_admin_by_email, create_admin
-import re
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
 
 admin_bp = Blueprint("admin_bp", __name__)
 secret_key = os.getenv("JWT_SECRET", os.getenv("JWT_SECRET_KEY", "yoursecretkey"))
@@ -153,16 +151,16 @@ def login_admin():
     # -------------------------------
     # Create JWT token
     # -------------------------------
-    token = jwt.encode(
-        {
+    # ✅ Use Flask-JWT-Extended instead of PyJWT
+    token = create_access_token(
+        identity={
             "user_id": user_id,
             "role": "admin",
-            "program": program,  # ✅ Include in token payload
-            "exp": datetime.utcnow() + timedelta(hours=12),
+            "program": program,  # now available in get_jwt_identity()
         },
-        secret_key,
-        algorithm="HS256",
+        expires_delta=timedelta(hours=12),
     )
+
 
     # -------------------------------
     # Return response
