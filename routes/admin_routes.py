@@ -5,7 +5,7 @@ import os
 from bson import ObjectId
 from config.db_config import db
 from models.admin_model import find_admin_by_user_id, find_admin_by_email, create_admin
-from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
+from flask_jwt_extended import jwt_required, get_jwt, create_access_token
 
 admin_bp = Blueprint("admin_bp", __name__)
 secret_key = os.getenv("JWT_SECRET", os.getenv("JWT_SECRET_KEY", "yoursecretkey"))
