@@ -16,6 +16,7 @@ instructors_col = db["instructors"]
 classes_col = db["classes"]
 attendance_logs_col = db["attendance_logs"]
 subjects_col = db["subjects"]
+admins_col = db["admins"]
 
 # -------------------------------
 # Helpers
@@ -133,48 +134,34 @@ def login_admin():
     user_id = (data.get("user_id") or "").strip()
     password = data.get("password") or ""
 
-    # -------------------------------
-    # Validate inputs
-    # -------------------------------
-    if not user_id or not password:
-        return jsonify({"error": "User ID and password are required."}), 400
-
-    admin = find_admin_by_user_id(user_id)
+    admin = admins_col.find_one({"user_id": user_id})
     if not admin:
         return jsonify({"error": "Invalid User ID"}), 401
 
     if not check_password_hash(admin["password"], password):
         return jsonify({"error": "Incorrect password"}), 401
 
-    program = admin.get("program", "N/A")  # ✅ Include program if available
+    program = admin.get("program")  # Example: BSINFOTECH or BSCS
 
-    # -------------------------------
-    # Create JWT token
-    # -------------------------------
-    # ✅ Use Flask-JWT-Extended instead of PyJWT
+    # ✅ FIXED: move program to additional_claims
     token = create_access_token(
-        identity={
-            "user_id": user_id,
+        identity=user_id,
+        additional_claims={
             "role": "admin",
-            "program": program,  # now available in get_jwt_identity()
+            "program": program
         },
         expires_delta=timedelta(hours=12),
     )
 
-
-    # -------------------------------
-    # Return response
-    # -------------------------------
     return jsonify(
         {
             "token": token,
-            "message": f"Login successful ({program})",
+            "message": "Login successful",
             "admin": {
                 "user_id": admin.get("user_id"),
                 "first_name": admin.get("first_name"),
                 "last_name": admin.get("last_name"),
-                "email": admin.get("email"),
-                "program": program,  # ✅ Added here
+                "program": program,
             },
         }
     ), 200
@@ -367,149 +354,50 @@ from datetime import datetime, timezone
 @admin_bp.route("/api/admin/students", methods=["GET"])
 @jwt_required()
 def get_all_students():
-    try:
-        identity = get_jwt_identity()
-        program = identity.get("program") if isinstance(identity, dict) else None
+    claims = get_jwt()
+    program = claims.get("program")  # ✅ read from claims, not identity
 
-        # 🧩 Ensure program filter (e.g., BSINFOTECH / BSCS)
-        course_filter = {}
-        if program:
-            course_filter["$or"] = [
-                {"Course": {"$regex": f"^{program}$", "$options": "i"}},
-                {"course": {"$regex": f"^{program}$", "$options": "i"}},
-            ]
+    # 🧩 Apply program filter (case-insensitive)
+    course_filter = {}
+    if program:
+        course_filter["$or"] = [
+            {"Course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"course": {"$regex": f"^{program}$", "$options": "i"}},
+        ]
 
-        # 🧩 Fetch students only from that course
-        students = list(
-            students_col.find(
-                course_filter,
-                {
-                    "_id": 0,
-                    "student_id": 1,
-                    "First_Name": 1,
-                    "Last_Name": 1,
-                    "Middle_Name": 1,
-                    "Course": 1,
-                    "Section": 1,
-                    "created_at": 1,
-                },
-            )
+    # 🧩 Fetch students only from that course
+    students = list(
+        students_col.find(
+            course_filter,
+            {
+                "_id": 0,
+                "student_id": 1,
+                "First_Name": 1,
+                "Last_Name": 1,
+                "Middle_Name": 1,
+                "Course": 1,
+                "Section": 1,
+                "created_at": 1,
+            },
         )
+    )
 
-        normalized = []
-        for s in students:
-            sid = s.get("student_id")
+    normalized = []
+    for s in students:
+        sid = s.get("student_id")
 
-            # ✅ Count attendance across attendance_logs.students array
-            pipeline = [
-                {"$unwind": "$students"},
-                {"$match": {"students.student_id": sid}},
-                {
-                    "$group": {
-                        "_id": "$students.student_id",
-                        "present": {
-                            "$sum": {
-                                "$cond": [
-                                    {"$eq": ["$students.status", "Present"]},
-                                    1,
-                                    0,
-                                ]
-                            }
-                        },
-                        "late": {
-                            "$sum": {
-                                "$cond": [
-                                    {"$eq": ["$students.status", "Late"]},
-                                    1,
-                                    0,
-                                ]
-                            }
-                        },
-                        "total": {"$sum": 1},
-                    }
-                },
-            ]
-
-            agg = list(attendance_logs_col.aggregate(pipeline))
-            if agg:
-                present = agg[0]["present"]
-                late = agg[0]["late"]
-                total = agg[0]["total"]
-                attendance_rate = (
-                    round(((present + late) / total) * 100, 2) if total > 0 else None
-                )
-            else:
-                attendance_rate = None
-
-            normalized.append(
-                {
-                    "student_id": sid,
-                    "first_name": s.get("First_Name"),
-                    "last_name": s.get("Last_Name"),
-                    "middle_name": s.get("Middle_Name"),
-                    "course": s.get("Course"),
-                    "section": s.get("Section"),
-                    "created_at": s.get("created_at"),
-                    "attendance_rate": attendance_rate,
-                }
-            )
-
-        return jsonify(normalized), 200
-
-    except Exception as e:
-        print("❌ Error fetching students:", e)
-        return jsonify({"error": "Server error", "details": str(e)}), 500
-
-
-# ============================================================
-# 📌 GET SINGLE STUDENT — Filtered by Admin’s Program
-# ============================================================
-@admin_bp.route("/api/admin/students/<student_id>", methods=["GET"])
-@jwt_required()
-def get_student(student_id):
-    try:
-        identity = get_jwt_identity()
-        program = identity.get("program") if isinstance(identity, dict) else None
-
-        # 🧩 Only fetch student within admin’s program
-        query = {"student_id": student_id}
-        if program:
-            query["$or"] = [
-                {"Course": {"$regex": f"^{program}$", "$options": "i"}},
-                {"course": {"$regex": f"^{program}$", "$options": "i"}},
-            ]
-
-        student = students_col.find_one(query)
-        if not student:
-            return (
-                jsonify({"error": "Student not found or not in your program"}),
-                404,
-            )
-
-        # ✅ Compute attendance stats
+        # ✅ Aggregate attendance stats
         pipeline = [
             {"$unwind": "$students"},
-            {"$match": {"students.student_id": student_id}},
+            {"$match": {"students.student_id": sid}},
             {
                 "$group": {
                     "_id": "$students.student_id",
                     "present": {
-                        "$sum": {
-                            "$cond": [
-                                {"$eq": ["$students.status", "Present"]},
-                                1,
-                                0,
-                            ]
-                        }
+                        "$sum": {"$cond": [{"$eq": ["$students.status", "Present"]}, 1, 0]}
                     },
                     "late": {
-                        "$sum": {
-                            "$cond": [
-                                {"$eq": ["$students.status", "Late"]},
-                                1,
-                                0,
-                            ]
-                        }
+                        "$sum": {"$cond": [{"$eq": ["$students.status", "Late"]}, 1, 0]}
                     },
                     "total": {"$sum": 1},
                 }
@@ -527,25 +415,83 @@ def get_student(student_id):
         else:
             attendance_rate = None
 
-        return (
-            jsonify(
-                {
-                    "student_id": student.get("student_id"),
-                    "first_name": student.get("First_Name"),
-                    "last_name": student.get("Last_Name"),
-                    "middle_name": student.get("Middle_Name"),
-                    "course": student.get("Course"),
-                    "section": student.get("Section"),
-                    "created_at": student.get("created_at"),
-                    "attendance_rate": attendance_rate,
-                }
-            ),
-            200,
+        normalized.append(
+            {
+                "student_id": sid,
+                "first_name": s.get("First_Name"),
+                "last_name": s.get("Last_Name"),
+                "middle_name": s.get("Middle_Name"),
+                "course": s.get("Course"),
+                "section": s.get("Section"),
+                "created_at": s.get("created_at"),
+                "attendance_rate": attendance_rate,
+            }
         )
 
-    except Exception as e:
-        print("❌ Error fetching student:", e)
-        return jsonify({"error": "Server error", "details": str(e)}), 500
+    return jsonify(normalized), 200
+
+
+# ============================================================
+# 📌 GET SINGLE STUDENT — Filtered by Admin’s Program
+# ============================================================
+@admin_bp.route("/api/admin/students/<student_id>", methods=["GET"])
+@jwt_required()
+def get_student(student_id):
+    claims = get_jwt()
+    program = claims.get("program")
+
+    query = {"student_id": student_id}
+    if program:
+        query["$or"] = [
+            {"Course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"course": {"$regex": f"^{program}$", "$options": "i"}},
+        ]
+
+    student = students_col.find_one(query)
+    if not student:
+        return jsonify({"error": "Student not found or not in your program"}), 404
+
+    # ✅ Compute attendance stats for this student
+    pipeline = [
+        {"$unwind": "$students"},
+        {"$match": {"students.student_id": student_id}},
+        {
+            "$group": {
+                "_id": "$students.student_id",
+                "present": {
+                    "$sum": {"$cond": [{"$eq": ["$students.status", "Present"]}, 1, 0]}
+                },
+                "late": {
+                    "$sum": {"$cond": [{"$eq": ["$students.status", "Late"]}, 1, 0]}
+                },
+                "total": {"$sum": 1},
+            }
+        },
+    ]
+    agg = list(attendance_logs_col.aggregate(pipeline))
+
+    if agg:
+        present = agg[0]["present"]
+        late = agg[0]["late"]
+        total = agg[0]["total"]
+        attendance_rate = (
+            round(((present + late) / total) * 100, 2) if total > 0 else None
+        )
+    else:
+        attendance_rate = None
+
+    return jsonify(
+        {
+            "student_id": student.get("student_id"),
+            "first_name": student.get("First_Name"),
+            "last_name": student.get("Last_Name"),
+            "middle_name": student.get("Middle_Name"),
+            "course": student.get("Course"),
+            "section": student.get("Section"),
+            "created_at": student.get("created_at"),
+            "attendance_rate": attendance_rate,
+        }
+    ), 200
 
 # 📌 UPDATE STUDENT
 @admin_bp.route("/api/admin/students/<student_id>", methods=["PUT"])
