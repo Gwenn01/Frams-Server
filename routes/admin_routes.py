@@ -2,10 +2,13 @@ from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, date
 import os
+import pandas as pd
+from io import BytesIO
 from bson import ObjectId
 from config.db_config import db
 from models.admin_model import find_admin_by_user_id, find_admin_by_email, create_admin
 from flask_jwt_extended import jwt_required, get_jwt, create_access_token
+
 
 admin_bp = Blueprint("admin_bp", __name__)
 secret_key = os.getenv("JWT_SECRET", os.getenv("JWT_SECRET_KEY", "yoursecretkey"))
@@ -605,8 +608,67 @@ def delete_subject(id):
 
 
 # ==============================
-# ✅ Class Management
+# ✅ Class Management (Updated)
 # ==============================
+
+from datetime import datetime
+import pandas as pd
+from io import BytesIO
+
+# 📌 Helper to serialize class documents
+def _serialize_class(cls):
+    students = cls.get("students", [])
+    return {
+        "_id": str(cls.get("_id")),
+        "subject_code": cls.get("subject_code"),
+        "subject_title": cls.get("subject_title"),
+        "course": cls.get("course"),
+        "year_level": cls.get("year_level"),
+        "semester": cls.get("semester"),
+        "section": cls.get("section"),
+        "instructor_id": cls.get("instructor_id"),
+        "instructor_first_name": cls.get("instructor_first_name"),
+        "instructor_last_name": cls.get("instructor_last_name"),
+        "schedule_blocks": cls.get("schedule_blocks", []),
+        "student_count": len(students),
+        "students": students,
+        "created_at": cls.get("created_at"),
+    }
+
+
+# 🟢 Create new class
+@admin_bp.route("/api/classes", methods=["POST"])
+def create_class():
+    data = request.get_json() or {}
+    required_fields = [
+        "subject_code", "subject_title", "course",
+        "year_level", "semester", "section"
+    ]
+
+    if not all(data.get(field) for field in required_fields):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    new_class = {
+        "subject_code": data["subject_code"],
+        "subject_title": data["subject_title"],
+        "course": data["course"],
+        "year_level": data["year_level"],
+        "semester": data["semester"],
+        "section": data["section"],
+        "schedule_blocks": data.get("schedule_blocks", []),
+        "instructor_id": None,
+        "instructor_first_name": None,
+        "instructor_last_name": None,
+        "students": [],
+        "created_at": datetime.utcnow(),
+    }
+
+    result = classes_col.insert_one(new_class)
+    cls = classes_col.find_one({"_id": result.inserted_id})
+    return jsonify(_serialize_class(cls)), 201
+
+
+# 🟢 Get all classes (with attendance breakdown)
 @admin_bp.route("/api/classes", methods=["GET"])
 def get_all_classes():
     classes = list(classes_col.find().sort("created_at", -1))
@@ -616,16 +678,11 @@ def get_all_classes():
         class_id = str(cls["_id"])
 
         # 🔹 Compute attendance stats
-        stats = list(
-            attendance_logs_col.aggregate([
-                {"$match": {"class_id": class_id}},
-                {"$unwind": "$students"},
-                {"$group": {
-                    "_id": "$students.status",
-                    "count": {"$sum": 1}
-                }}
-            ])
-        )
+        stats = list(attendance_logs_col.aggregate([
+            {"$match": {"class_id": class_id}},
+            {"$unwind": "$students"},
+            {"$group": {"_id": "$students.status", "count": {"$sum": 1}}}
+        ]))
 
         total_logs = sum(s["count"] for s in stats)
         present_count = sum(s["count"] for s in stats if s["_id"] == "Present")
@@ -648,6 +705,7 @@ def get_all_classes():
     return jsonify(output), 200
 
 
+# 🟢 Get single class
 @admin_bp.route("/api/classes/<id>", methods=["GET"])
 def get_class(id):
     try:
@@ -657,18 +715,12 @@ def get_class(id):
     if not cls:
         return jsonify({"error": "Class not found"}), 404
 
-    # 🔹 Compute attendance stats for this class
     class_id = str(cls["_id"])
-    stats = list(
-        attendance_logs_col.aggregate([
-            {"$match": {"class_id": class_id}},
-            {"$unwind": "$students"},
-            {"$group": {
-                "_id": "$students.status",
-                "count": {"$sum": 1}
-            }}
-        ])
-    )
+    stats = list(attendance_logs_col.aggregate([
+        {"$match": {"class_id": class_id}},
+        {"$unwind": "$students"},
+        {"$group": {"_id": "$students.status", "count": {"$sum": 1}}}
+    ]))
 
     total_logs = sum(s["count"] for s in stats)
     present_count = sum(s["count"] for s in stats if s["_id"] == "Present")
@@ -689,20 +741,19 @@ def get_class(id):
     return jsonify(cls_data), 200
 
 
+# 🟢 Update class details or instructor
 @admin_bp.route("/api/classes/<id>", methods=["PUT"])
 def update_class(id):
     data = request.get_json() or {}
     update_data = {}
+
     for field in [
-        "section",
-        "semester",
-        "schedule_blocks",
-        "instructor_id",
-        "instructor_first_name",
-        "instructor_last_name",
+        "section", "semester", "schedule_blocks",
+        "instructor_id", "instructor_first_name", "instructor_last_name"
     ]:
         if field in data:
             update_data[field] = data[field]
+
     if not update_data:
         return jsonify({"error": "No valid fields provided"}), 400
 
@@ -710,19 +761,59 @@ def update_class(id):
         result = classes_col.update_one({"_id": ObjectId(id)}, {"$set": update_data})
     except Exception:
         return jsonify({"error": "Invalid class ID"}), 400
+
     if result.matched_count == 0:
         return jsonify({"error": "Class not found"}), 404
+
     return jsonify({"message": "Class updated successfully"}), 200
 
 
+# 🟢 Upload students via Excel
+@admin_bp.route("/api/classes/<class_id>/upload-students", methods=["POST"])
+def upload_students_to_class(class_id):
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    try:
+        df = pd.read_excel(BytesIO(file.read()))
+        required_cols = {"student_id", "First_Name", "Last_Name", "Course", "Section"}
+        if not required_cols.issubset(df.columns):
+            return jsonify({"error": f"Missing columns: {required_cols}"}), 400
+
+        students = df.to_dict(orient="records")
+
+        classes_col.update_one(
+            {"_id": ObjectId(class_id)},
+            {"$set": {"students": students}}
+        )
+
+        return jsonify({"message": f"{len(students)} students uploaded successfully"}), 200
+
+    except Exception as e:
+        return jsonify({"error": f"Failed to process file: {str(e)}"}), 500
+
+
+# 🟢 Get students assigned to a class
+@admin_bp.route("/api/classes/<class_id>/students", methods=["GET"])
+def get_students_by_class(class_id):
+    cls = classes_col.find_one({"_id": ObjectId(class_id)})
+    if not cls:
+        return jsonify({"error": "Class not found"}), 404
+    return jsonify(cls.get("students", [])), 200
+
+
+# 🟢 Delete a class
 @admin_bp.route("/api/classes/<id>", methods=["DELETE"])
 def delete_class(id):
     try:
         result = classes_col.delete_one({"_id": ObjectId(id)})
     except Exception:
         return jsonify({"error": "Invalid class ID"}), 400
+
     if result.deleted_count == 0:
         return jsonify({"error": "Class not found"}), 404
+
     return jsonify({"message": "Class deleted successfully"}), 200
 
 
