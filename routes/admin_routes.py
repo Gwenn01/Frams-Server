@@ -606,6 +606,69 @@ def delete_subject(id):
         return jsonify({"error": "Subject not found"}), 404
     return jsonify({"message": "Subject deleted successfully"}), 200
 
+@admin_bp.route("/semesters", methods=["POST"])
+def add_semester():
+    try:
+        data = request.get_json()
+        db.semesters.insert_one({
+            "semester_name": data["semester_name"],
+            "school_year": data["school_year"],
+            "start_date": data.get("start_date", None),
+            "end_date": data.get("end_date", None),
+            "is_active": False
+        })
+        return jsonify({"message": "Semester added successfully"}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@admin_bp.route("/semesters", methods=["GET"])
+def get_semesters():
+    try:
+        semesters = list(db.semesters.find())
+        for sem in semesters:
+            sem["_id"] = str(sem["_id"])
+        return jsonify(semesters)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@admin_bp.route("/semesters/activate/<id>", methods=["PUT"])
+def activate_semester(id):
+    try:
+        # Deactivate all semesters
+        db.semesters.update_many({}, {"$set": {"is_active": False}})
+        # Activate selected one
+        db.semesters.update_one({"_id": ObjectId(id)}, {"$set": {"is_active": True}})
+        active_sem = db.semesters.find_one({"_id": ObjectId(id)})
+        active_sem["_id"] = str(active_sem["_id"])
+        return jsonify({"message": "Semester activated successfully", "active_semester": active_sem})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@admin_bp.route("/subjects/active", methods=["GET"])
+def get_active_subjects():
+    try:
+        active_sem = db.semesters.find_one({"is_active": True})
+        if not active_sem:
+            return jsonify({"message": "No active semester found"}), 404
+
+        subjects = list(db.subjects.find({
+            "semester": active_sem["semester_name"]
+        }))
+
+        for subj in subjects:
+            subj["_id"] = str(subj["_id"])
+
+        return jsonify({
+            "active_semester": {
+                "semester_name": active_sem["semester_name"],
+                "school_year": active_sem["school_year"]
+            },
+            "subjects": subjects
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 
 # ==============================
 # ✅ Class Management (Updated)
