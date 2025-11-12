@@ -651,10 +651,19 @@ def get_active_subjects():
         if not active_sem:
             return jsonify({"message": "No active semester found"}), 404
 
-        subjects = list(db.subjects.find({
-            "semester": active_sem["semester_name"]
-        }))
+        sem_name = active_sem["semester_name"].lower()
 
+        # 🔍 Flexible semester matching
+        if "1st" in sem_name:
+            query = {"semester": {"$regex": "1st", "$options": "i"}}
+        elif "2nd" in sem_name:
+            query = {"semester": {"$regex": "2nd", "$options": "i"}}
+        elif "summer" in sem_name:
+            query = {"semester": {"$regex": "summer", "$options": "i"}}
+        else:
+            query = {}
+
+        subjects = list(db.subjects.find(query))
         for subj in subjects:
             subj["_id"] = str(subj["_id"])
 
@@ -664,11 +673,10 @@ def get_active_subjects():
                 "school_year": active_sem["school_year"]
             },
             "subjects": subjects
-        })
+        }), 200
     except Exception as e:
+        print("❌ Error in /subjects/active:", e)
         return jsonify({"error": str(e)}), 500
-
-
 
 # ==============================
 # ✅ Class Management (Updated)
