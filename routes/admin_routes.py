@@ -703,22 +703,37 @@ def activate_semester(id):
         return jsonify({"error": str(e)}), 500
 
 @admin_bp.route("/api/admin/subjects/active", methods=["GET"])
+@jwt_required()
 def get_active_subjects():
     try:
+        # 🧩 Get program from JWT claims
+        claims = get_jwt()
+        admin_program = claims.get("program")  # e.g., "BSINFOTECH" or "BSCS"
+
+        if not admin_program:
+            return jsonify({"error": "Admin program not found in token"}), 400
+
+        # 🧠 Find currently active semester
         active_sem = db.semesters.find_one({"is_active": True})
         if not active_sem:
             return jsonify({"message": "No active semester found"}), 404
 
-        # 🎯 Fetch only subjects with matching semester_id
-        subjects = list(db.subjects.find({"semester_id": str(active_sem["_id"])}))
+        # 🎯 Fetch subjects with both semester_id and course matching the admin's program
+        subjects = list(db.subjects.find({
+            "semester_id": str(active_sem["_id"]),
+            "course": {"$regex": f"^{admin_program}$", "$options": "i"}
+        }).sort("year_level", 1))
 
+        # 🧹 Clean up _id fields for JSON response
         for subj in subjects:
             subj["_id"] = str(subj["_id"])
 
+        # 🧾 Return active semester info + filtered subjects
         return jsonify({
             "active_semester": {
                 "semester_name": active_sem["semester_name"],
-                "school_year": active_sem["school_year"]
+                "school_year": active_sem["school_year"],
+                "program": admin_program
             },
             "subjects": subjects
         }), 200
