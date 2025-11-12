@@ -609,39 +609,97 @@ def delete_subject(id):
 @admin_bp.route("/api/admin/semesters", methods=["POST"])
 def add_semester():
     try:
-        data = request.get_json()
-        db.semesters.insert_one({
+        data = request.get_json() or {}
+        required = ["semester_name", "school_year"]
+        if not all(data.get(f) for f in required):
+            return jsonify({"error": "Missing required fields"}), 400
+
+        # 🧩 Prevent duplicate semester per school year
+        existing = db.semesters.find_one({
+            "semester_name": data["semester_name"],
+            "school_year": data["school_year"]
+        })
+        if existing:
+            return jsonify({"error": "Semester already exists for this school year"}), 400
+
+        new_sem = {
             "semester_name": data["semester_name"],
             "school_year": data["school_year"],
-            "start_date": data.get("start_date", None),
-            "end_date": data.get("end_date", None),
-            "is_active": False
-        })
+            "start_date": data.get("start_date"),
+            "end_date": data.get("end_date"),
+            "is_active": False,
+            "created_at": datetime.utcnow()
+        }
+
+        db.semesters.insert_one(new_sem)
         return jsonify({"message": "Semester added successfully"}), 201
+
     except Exception as e:
+        print("❌ Error in add_semester:", e)
         return jsonify({"error": str(e)}), 500
 
 @admin_bp.route("/api/admin/semesters", methods=["GET"])
 def get_semesters():
     try:
-        semesters = list(db.semesters.find())
+        semesters = list(db.semesters.find().sort("created_at", -1))
         for sem in semesters:
             sem["_id"] = str(sem["_id"])
-        return jsonify(semesters)
+        return jsonify(semesters), 200
+
     except Exception as e:
+        print("❌ Error in get_semesters:", e)
         return jsonify({"error": str(e)}), 500
 
 @admin_bp.route("/api/admin/semesters/activate/<id>", methods=["PUT"])
 def activate_semester(id):
     try:
-        # Deactivate all semesters
+        # 📴 Deactivate all semesters
         db.semesters.update_many({}, {"$set": {"is_active": False}})
-        # Activate selected one
+
+        # ✅ Activate selected semester
         db.semesters.update_one({"_id": ObjectId(id)}, {"$set": {"is_active": True}})
         active_sem = db.semesters.find_one({"_id": ObjectId(id)})
+        if not active_sem:
+            return jsonify({"error": "Semester not found"}), 404
+
+        # 🧠 Determine regex pattern (for subjects like "1st Sem", "2nd Sem")
+        sem_name = active_sem["semester_name"].lower()
+        if "1st" in sem_name:
+            sem_pattern = "1st"
+        elif "2nd" in sem_name:
+            sem_pattern = "2nd"
+        elif "summer" in sem_name:
+            sem_pattern = "summer"
+        else:
+            sem_pattern = ""
+
+        # 🔗 Link matching subjects to this semester
+        update_result = db.subjects.update_many(
+            {"semester": {"$regex": sem_pattern, "$options": "i"}},
+            {
+                "$set": {
+                    "semester_id": str(active_sem["_id"]),
+                    "school_year": active_sem["school_year"]
+                }
+            }
+        )
+
+        # 🧹 Remove links from other subjects not part of this semester
+        db.subjects.update_many(
+            {"semester": {"$not": {"$regex": sem_pattern, "$options": "i"}}},
+            {"$unset": {"semester_id": "", "school_year": ""}}
+        )
+
+        print(f"✅ Activated {active_sem['semester_name']} and updated {update_result.modified_count} subjects.")
+
         active_sem["_id"] = str(active_sem["_id"])
-        return jsonify({"message": "Semester activated successfully", "active_semester": active_sem})
+        return jsonify({
+            "message": f"Semester activated successfully and {update_result.modified_count} subjects linked.",
+            "active_semester": active_sem
+        }), 200
+
     except Exception as e:
+        print("❌ Error in activate_semester:", e)
         return jsonify({"error": str(e)}), 500
 
 @admin_bp.route("/api/admin/subjects/active", methods=["GET"])
@@ -651,19 +709,9 @@ def get_active_subjects():
         if not active_sem:
             return jsonify({"message": "No active semester found"}), 404
 
-        sem_name = active_sem["semester_name"].lower()
+        # 🎯 Fetch only subjects with matching semester_id
+        subjects = list(db.subjects.find({"semester_id": str(active_sem["_id"])}))
 
-        # 🔍 Flexible semester matching
-        if "1st" in sem_name:
-            query = {"semester": {"$regex": "1st", "$options": "i"}}
-        elif "2nd" in sem_name:
-            query = {"semester": {"$regex": "2nd", "$options": "i"}}
-        elif "summer" in sem_name:
-            query = {"semester": {"$regex": "summer", "$options": "i"}}
-        else:
-            query = {}
-
-        subjects = list(db.subjects.find(query))
         for subj in subjects:
             subj["_id"] = str(subj["_id"])
 
@@ -674,8 +722,9 @@ def get_active_subjects():
             },
             "subjects": subjects
         }), 200
+
     except Exception as e:
-        print("❌ Error in /subjects/active:", e)
+        print("❌ Error in get_active_subjects:", e)
         return jsonify({"error": str(e)}), 500
 
 # ==============================
