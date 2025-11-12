@@ -21,6 +21,7 @@ CORS(
         "http://localhost:5173",  # Local dev
         "https://face-recognition-attendance-monitor.vercel.app",  # ✅ Production frontend
         "https://meuorii-face-recognition-attendance.hf.space",    # ✅ Hugging Face AI microservice
+        "https://frams-server-production.up.railway.app"
     ]}},
     supports_credentials=True,
     expose_headers=["Content-Type", "Authorization"],
@@ -56,6 +57,34 @@ app.register_blueprint(instructor_bp, url_prefix="/api/instructor")
 app.register_blueprint(attendance_bp, url_prefix="/api/attendance")
 app.register_blueprint(face_bp, url_prefix="/api/face")
 app.register_blueprint(admin_bp)
+
+# ----------------------------
+# ✅ Handle Preflight (CORS OPTIONS) Requests Globally
+# ----------------------------
+from flask import request
+
+@app.before_request
+def handle_options_request():
+    """Ensure all OPTIONS requests get a valid 200 response for CORS."""
+    if request.method == "OPTIONS":
+        response = jsonify({"status": "OK"})
+        origin = request.headers.get("Origin", "*")
+        response.headers.add("Access-Control-Allow-Origin", origin)
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
+        response.headers.add("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+        response.headers.add("Access-Control-Allow-Credentials", "true")
+        return response, 200
+    
+# ----------------------------
+# 🌐 Optional: CORS Request Logging (for debugging)
+# ----------------------------
+@app.after_request
+def after_request(response):
+    origin = request.headers.get("Origin")
+    print(f"🌍 CORS → {origin} | {request.method} {request.path} | Status {response.status_code}")
+    response.headers.add("Access-Control-Allow-Origin", origin or "*")
+    response.headers.add("Vary", "Origin")
+    return response
 
 # ----------------------------
 # Health + Root Routes
