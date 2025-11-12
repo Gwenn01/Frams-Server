@@ -606,7 +606,7 @@ def delete_subject(id):
         return jsonify({"error": "Subject not found"}), 404
     return jsonify({"message": "Subject deleted successfully"}), 200
 
-@admin_bp.route("/semesters", methods=["POST"])
+@admin_bp.route("/api/admin/semesters", methods=["POST"])
 def add_semester():
     try:
         data = request.get_json()
@@ -621,7 +621,7 @@ def add_semester():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@admin_bp.route("/semesters", methods=["GET"])
+@admin_bp.route("/api/admin/semesters", methods=["GET"])
 def get_semesters():
     try:
         semesters = list(db.semesters.find())
@@ -631,7 +631,7 @@ def get_semesters():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@admin_bp.route("/semesters/activate/<id>", methods=["PUT"])
+@admin_bp.route("/api/admin/semesters/activate/<id>", methods=["PUT"])
 def activate_semester(id):
     try:
         # Deactivate all semesters
@@ -644,7 +644,7 @@ def activate_semester(id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@admin_bp.route("/subjects/active", methods=["GET"])
+@admin_bp.route("/api/admin/subjects/active", methods=["GET"])
 def get_active_subjects():
     try:
         active_sem = db.semesters.find_one({"is_active": True})
