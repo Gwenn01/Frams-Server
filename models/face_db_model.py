@@ -21,13 +21,18 @@ def save_face_data(student_id, update_fields):
         set_ops = {
             "student_id": student_id,
             "First_Name": update_fields.get("First_Name"),
+            "Middle_Name": update_fields.get("Middle_Name"),
             "Last_Name": update_fields.get("Last_Name"),
-            "Course": update_fields.get("Course"),
+            "Suffix": update_fields.get("Suffix"),
             "Email": update_fields.get("Email"),
             "Contact_Number": update_fields.get("Contact_Number"),
             "Subjects": update_fields.get("Subjects", []),
-            "registered": True
+            "registered": True,
         }
+
+        # ✅ Only set Course if it actually exists (prevent overwrite)
+        if update_fields.get("Course"):
+            set_ops["Course"] = update_fields["Course"]
 
         # ✅ Merge embeddings per angle
         if embeddings and isinstance(embeddings, dict):
@@ -38,7 +43,7 @@ def save_face_data(student_id, update_fields):
         # ✅ Final MongoDB update
         update_ops = {
             "$set": set_ops,
-            "$setOnInsert": {"created_at": datetime.utcnow()}
+            "$setOnInsert": {"created_at": datetime.utcnow()},
         }
 
         result = students_collection.update_one(
@@ -56,7 +61,6 @@ def save_face_data(student_id, update_fields):
         print("❌ MongoDB save error:", str(e))
         print(traceback.format_exc())
         return False
-
 
 # -----------------------------
 # Normalize student document
