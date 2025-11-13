@@ -50,23 +50,13 @@ def _serialize_subject(s):
         "created_at": s.get("created_at"),
     }
 
-def _serialize_class(cls):
-    return {
-        "_id": str(cls.get("_id")),
-        "subject_id": str(cls.get("subject_id")) if cls.get("subject_id") else None,
-        "subject_code": cls.get("subject_code") or "-",
-        "subject_title": cls.get("subject_title") or "-",
-        "course": cls.get("course") or "-",
-        "year_level": cls.get("year_level") or "-",
-        "semester": cls.get("semester") or "-",
-        "section": cls.get("section") or "-",
-        "instructor_id": str(cls.get("instructor_id")) if cls.get("instructor_id") else None,
-        "instructor_first_name": cls.get("instructor_first_name") or "N/A",
-        "instructor_last_name": cls.get("instructor_last_name") or "N/A",
-        "schedule_blocks": cls.get("schedule_blocks", []),
-        "students": cls.get("students", []),
-        "created_at": cls.get("created_at").isoformat() if cls.get("created_at") else None,
-    }
+def _admin_program():
+    """
+    Extracts the admin's program (BSINFOTECH or BSCS)
+    from JWT claims and returns uppercase.
+    """
+    claims = get_jwt()
+    return claims.get("program", "").upper()
 
 # =========================================
 # ✅ Auth: Register (after frontend OTP)
@@ -799,6 +789,8 @@ def _serialize_class(cls):
 # 🟢 Create new class
 @admin_bp.route("/api/classes", methods=["POST"])
 def create_class():
+    admin_program = _admin_program() 
+
     data = request.get_json() or {}
 
     required_fields = [
@@ -808,6 +800,9 @@ def create_class():
 
     if not all(data.get(field) for field in required_fields):
         return jsonify({"error": "Missing required fields"}), 400
+    
+    if data["course"].upper() != admin_program:
+        return jsonify({"error": "You are not allowed to create a class for another program"}), 403
 
     # 🔍 Fetch Instructor
     instructor = instructors_col.find_one({"instructor_id": data["instructor_id"]})
@@ -844,8 +839,12 @@ def create_class():
 
 # 🟢 Get all classes (with attendance breakdown)
 @admin_bp.route("/api/classes", methods=["GET"])
+@jwt_required()
 def get_all_classes():
-    classes = list(classes_col.find().sort("created_at", -1))
+    admin_program = _admin_program()
+    classes = list(classes_col.find(
+        {"course": {"$regex": f"^{admin_program}$", "$options": "i"}}
+    ).sort("created_at", -1))
     output = []
 
     for cls in classes:
@@ -881,14 +880,27 @@ def get_all_classes():
 
 # 🟢 Get single class
 @admin_bp.route("/api/classes/<id>", methods=["GET"])
+@jwt_required()
 def get_class(id):
+    admin_program = _admin_program()
+
+    # Validate ObjectId
     try:
         cls = classes_col.find_one({"_id": ObjectId(id)})
     except Exception:
         return jsonify({"error": "Invalid class ID"}), 400
+
+    # Not found
     if not cls:
         return jsonify({"error": "Class not found"}), 404
 
+    # 🚫 Block access if class belongs to another program
+    if cls.get("course", "").upper() != admin_program:
+        return jsonify({"error": "You are not allowed to access classes from another program"}), 403
+
+    # ---------------------------------------
+    # Attendance Stats (Your existing logic)
+    # ---------------------------------------
     class_id = str(cls["_id"])
     stats = list(attendance_logs_col.aggregate([
         {"$match": {"class_id": class_id}},
@@ -901,7 +913,10 @@ def get_class(id):
     late_count = sum(s["count"] for s in stats if s["_id"] == "Late")
     absent_count = sum(s["count"] for s in stats if s["_id"] == "Absent")
 
-    attendance_rate = round(((present_count + late_count) / total_logs) * 100, 2) if total_logs > 0 else 0
+    attendance_rate = (
+        round(((present_count + late_count) / total_logs) * 100, 2)
+        if total_logs > 0 else 0
+    )
 
     cls_data = _serialize_class(cls)
     cls_data["attendance_rate"] = attendance_rate
@@ -914,26 +929,54 @@ def get_class(id):
 
     return jsonify(cls_data), 200
 
-
 # 🟢 Update class details or instructor
 @admin_bp.route("/api/classes/<id>", methods=["PUT"])
+@jwt_required()
 def update_class(id):
+    admin_program = _admin_program()
     data = request.get_json() or {}
+
+    # 🧩 Fetch class first
+    cls = classes_col.find_one({"_id": ObjectId(id)})
+
+    if not cls:
+        return jsonify({"error": "Class not found"}), 404
+
+    # ❗ Prevent editing classes from another program
+    if cls["course"].upper() != admin_program:
+        return jsonify({"error": "You are not allowed to modify another program's class"}), 403
+
     update_data = {}
 
-    for field in [
-        "section", "semester", "schedule_blocks",
-        "instructor_id", "instructor_first_name", "instructor_last_name"
-    ]:
+    # 🟢 Updatable fields (except instructor)
+    for field in ["section", "semester", "schedule_blocks"]:
         if field in data:
             update_data[field] = data[field]
+
+    # 🟢 Handle instructor update
+    if "instructor_id" in data and data["instructor_id"]:
+
+        instructor = instructors_col.find_one({"instructor_id": data["instructor_id"]})
+
+        if not instructor:
+            return jsonify({"error": "Instructor not found"}), 404
+
+        # Update instructor-related fields
+        update_data["instructor_id"] = instructor["instructor_id"]
+        update_data["instructor_first_name"] = instructor["first_name"]
+        update_data["instructor_last_name"] = instructor["last_name"]
 
     if not update_data:
         return jsonify({"error": "No valid fields provided"}), 400
 
+    # 🔧 Apply update
     try:
-        result = classes_col.update_one({"_id": ObjectId(id)}, {"$set": update_data})
-    except Exception:
+        result = classes_col.update_one(
+            {"_id": ObjectId(id)},
+            {"$set": update_data}
+        )
+    except Exception as e:
+        print("Update error:", e)
         return jsonify({"error": "Invalid class ID"}), 400
 
     if result.matched_count == 0:
@@ -941,71 +984,86 @@ def update_class(id):
 
     return jsonify({"message": "Class updated successfully"}), 200
 
-
-# 🟢 Upload students via Excel
+# 🟢 Upload students via Excel + Program Restriction
 @admin_bp.route("/api/classes/<class_id>/upload-students", methods=["POST"])
+@jwt_required()
 def upload_students_to_class(class_id):
+
+    # ============================================
+    # 🔥 FIX #5 — Restrict by Admin Program
+    # ============================================
+    admin_program = get_jwt().get("program", "").upper()
+
+    # Get the class first
+    cls = classes_col.find_one({"_id": ObjectId(class_id)})
+    if not cls:
+        return jsonify({"error": "Class not found"}), 404
+
+    # Prevent admin from editing classes outside their program
+    if cls["course"].upper() != admin_program:
+        return jsonify({"error": "Forbidden — You cannot upload students to another program's class"}), 403
+
+    # ============================================
+    # 🔥 Continue with Excel Processing
+    # ============================================
+
     file = request.files.get("file")
     if not file:
         return jsonify({"error": "No file uploaded"}), 400
 
     try:
-        # ----------------------------------------
-        # 🔥 FIX: Prevent double-read errors
-        # ----------------------------------------
         file_bytes = BytesIO(file.read())
 
-        # =============================
-        # 1️⃣ FIRST PASS — Read headers
-        # =============================
+        # 1️⃣ FIRST PASS — Read header rows
         df = pd.read_excel(file_bytes, header=None)
-
-        # Reset pointer before reading again
         file_bytes.seek(0)
 
-        # ----------------------------
-        # Extract Subject (Row 1)
-        # ----------------------------
-        row1 = str(df.iloc[0, 0]).strip()  # "SA 101 - System Administration..."
+        # ----------------------------------------
+        # Extract subject code from row 1
+        # Example:  "SA 101 - System Administration..."
+        # ----------------------------------------
+        row1 = str(df.iloc[0, 0]).strip()
         subject_code = row1.split("-")[0].strip()
 
         subject_doc = subjects_col.find_one({"subject_code": subject_code})
         if not subject_doc:
             return jsonify({"error": f"Subject '{subject_code}' not found"}), 400
 
-        # ----------------------------
-        # Extract Course + Section (Row 2)
-        # ----------------------------
-        row2 = str(df.iloc[1, 0]).strip()  # Example: "BSINFOTECH 4C"
+        # ----------------------------------------
+        # Extract Course + Section from row 2
+        # Example: "BSINFOTECH 4C"
+        # ----------------------------------------
+        row2 = str(df.iloc[1, 0]).strip()
         parts = row2.split(" ")
 
         if len(parts) < 2:
-            return jsonify({"error": "Invalid Course/Section format in row 2. Expected 'BSINFOTECH 4C'"}), 400
+            return jsonify({"error": "Invalid Course/Section format. Expected: 'BSINFOTECH 4C'"}), 400
 
         course = parts[0].upper()
         section = parts[1].upper()
 
-        # =============================
-        # 2️⃣ SECOND PASS — Read student list
-        # =============================
-        df_bytes = BytesIO(file_bytes.getvalue())  # ensure clean read
-        df2 = pd.read_excel(df_bytes, header=2)
+        # ============================================
+        # 🔥 FIX #5 PART 2 — Excel also cannot override program
+        # ============================================
+        if course != admin_program:
+            return jsonify({
+                "error": f"Excel course '{course}' does NOT match your program '{admin_program}'"
+            }), 403
+
+        # 2️⃣ SECOND PASS — Read student table starting row 3
+        df2 = pd.read_excel(BytesIO(file_bytes.getvalue()), header=2)
 
         required_cols = {"Student ID", "First Name", "Last Name"}
         if not required_cols.issubset(df2.columns):
             return jsonify({"error": f"Excel missing required columns {required_cols}"}), 400
 
-        # ----------------------------
-        # Build the student list
-        # ----------------------------
         students = []
-
         for _, row in df2.iterrows():
             sid = str(row["Student ID"]).strip()
             first = str(row["First Name"]).strip()
             last = str(row["Last Name"]).strip()
 
-            # Validate student exists in MongoDB
+            # Validate student exists
             stu = students_col.find_one({"student_id": sid})
             if not stu:
                 return jsonify({"error": f"Student {sid} not found in database"}), 400
@@ -1015,12 +1073,10 @@ def upload_students_to_class(class_id):
                 "first_name": first,
                 "last_name": last,
                 "course": course,
-                "section": section
+                "section": section,
             })
 
-        # =============================
-        # 3️⃣ Update Class Document
-        # =============================
+        # 3️⃣ Update the class
         classes_col.update_one(
             {"_id": ObjectId(class_id)},
             {
@@ -1050,23 +1106,44 @@ def upload_students_to_class(class_id):
 
 # 🟢 Get students assigned to a class
 @admin_bp.route("/api/classes/<class_id>/students", methods=["GET"])
+@jwt_required()
 def get_students_by_class(class_id):
-    cls = classes_col.find_one({"_id": ObjectId(class_id)})
-    if not cls:
-        return jsonify({"error": "Class not found"}), 404
-    return jsonify(cls.get("students", [])), 200
+    admin_program = _admin_program()
 
-
-# 🟢 Delete a class
-@admin_bp.route("/api/classes/<id>", methods=["DELETE"])
-def delete_class(id):
     try:
-        result = classes_col.delete_one({"_id": ObjectId(id)})
+        cls = classes_col.find_one({"_id": ObjectId(class_id)})
     except Exception:
         return jsonify({"error": "Invalid class ID"}), 400
 
-    if result.deleted_count == 0:
+    if not cls:
         return jsonify({"error": "Class not found"}), 404
+
+    # ❗ Prevent admin from accessing another program’s classes
+    if cls["course"].upper() != admin_program:
+        return jsonify({"error": "Forbidden: You cannot access classes from another program"}), 403
+
+    return jsonify(cls.get("students", [])), 200
+
+# 🟢 Delete a class
+@admin_bp.route("/api/classes/<id>", methods=["DELETE"])
+@jwt_required()
+def delete_class(id):
+    admin_program = _admin_program()
+
+    try:
+        cls = classes_col.find_one({"_id": ObjectId(id)})
+    except Exception:
+        return jsonify({"error": "Invalid class ID"}), 400
+
+    if not cls:
+        return jsonify({"error": "Class not found"}), 404
+
+    # ❗ Prevent admin from deleting classes from another program
+    if cls["course"].upper() != admin_program:
+        return jsonify({"error": "Forbidden: You cannot delete another program’s class"}), 403
+
+    # After program check — safe to delete
+    result = classes_col.delete_one({"_id": cls["_id"]})
 
     return jsonify({"message": "Class deleted successfully"}), 200
 
@@ -1091,48 +1168,77 @@ def get_all_instructors():
     return jsonify(formatted), 200
 
 @admin_bp.route("/api/classes/<class_id>/assign-instructor", methods=["PUT"])
+@jwt_required()
 def assign_instructor_to_class(class_id):
-    data = request.get_json() or {}
-    instructor_id = data.get("instructor_id")
-    if not instructor_id:
-        return jsonify({"error": "Instructor ID is required"}), 400
-
-    instructor = instructors_col.find_one({"instructor_id": instructor_id})
-    if not instructor:
-        return jsonify({"error": "Instructor not found"}), 404
-
-    update_data = {
-        "instructor_id": instructor.get("instructor_id"),
-        "instructor_first_name": instructor.get("first_name"),
-        "instructor_last_name": instructor.get("last_name"),
-        "is_attendance_active": False,
-        "attendance_start_time": None,
-        "attendance_end_time": None,
-    }
-
     try:
-        result = classes_col.update_one({"_id": ObjectId(class_id)}, {"$set": update_data})
-    except Exception:
-        return jsonify({"error": "Invalid class ID"}), 400
-    if result.matched_count == 0:
-        return jsonify({"error": "Class not found"}), 404
+        admin_program = get_jwt().get("program", "").upper()
 
-    return jsonify(
-        {
+        # -----------------------------------------------------
+        # 1️⃣ Validate class exists first
+        # -----------------------------------------------------
+        try:
+            cls = classes_col.find_one({"_id": ObjectId(class_id)})
+        except Exception:
+            return jsonify({"error": "Invalid class ID"}), 400
+
+        if not cls:
+            return jsonify({"error": "Class not found"}), 404
+
+        # -----------------------------------------------------
+        # 2️⃣ Prevent cross-program modification
+        # -----------------------------------------------------
+        if cls.get("course", "").upper() != admin_program:
+            return jsonify({
+                "error": "Forbidden: You cannot assign instructors to another program’s class"
+            }), 403
+
+        # -----------------------------------------------------
+        # 3️⃣ Validate instructor ID
+        # -----------------------------------------------------
+        data = request.get_json() or {}
+        instructor_id = data.get("instructor_id")
+
+        if not instructor_id:
+            return jsonify({"error": "Instructor ID is required"}), 400
+
+        instructor = instructors_col.find_one({"instructor_id": instructor_id})
+        if not instructor:
+            return jsonify({"error": "Instructor not found"}), 404
+
+        # -----------------------------------------------------
+        # 4️⃣ Update class with instructor info
+        # -----------------------------------------------------
+        update_data = {
+            "instructor_id": instructor.get("instructor_id"),
+            "instructor_first_name": instructor.get("first_name", "N/A"),
+            "instructor_last_name": instructor.get("last_name", "N/A"),
+            "is_attendance_active": False,
+            "attendance_start_time": None,
+            "attendance_end_time": None,
+        }
+
+        classes_col.update_one(
+            {"_id": ObjectId(class_id)},
+            {"$set": update_data}
+        )
+
+        # -----------------------------------------------------
+        # 5️⃣ Build clean response
+        # -----------------------------------------------------
+        return jsonify({
             "message": "Instructor assigned successfully",
             "class_id": class_id,
             "instructor": {
                 "instructor_id": update_data["instructor_id"],
                 "first_name": update_data["instructor_first_name"],
                 "last_name": update_data["instructor_last_name"],
-            },
-            "attendance_defaults": {
-                "is_attendance_active": update_data["is_attendance_active"],
-                "attendance_start_time": update_data["attendance_start_time"],
-                "attendance_end_time": update_data["attendance_end_time"],
-            },
-        }
-    ), 200
+            }
+        }), 200
+
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 # ==============================
 # ✅ Attendance Logs (Admin)
