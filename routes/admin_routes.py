@@ -937,13 +937,23 @@ def upload_students_to_class(class_id):
         return jsonify({"error": "No file uploaded"}), 400
 
     try:
-        # Read Excel
-        df = pd.read_excel(BytesIO(file.read()), header=None)
+        # ----------------------------------------
+        # 🔥 FIX: Prevent double-read errors
+        # ----------------------------------------
+        file_bytes = BytesIO(file.read())
+
+        # =============================
+        # 1️⃣ FIRST PASS — Read headers
+        # =============================
+        df = pd.read_excel(file_bytes, header=None)
+
+        # Reset pointer before reading again
+        file_bytes.seek(0)
 
         # ----------------------------
-        # 1️⃣ Extract Subject (ROW 1)
+        # Extract Subject (Row 1)
         # ----------------------------
-        row1 = str(df.iloc[0, 0]).strip()   # "SA 101 - System Administration..."
+        row1 = str(df.iloc[0, 0]).strip()  # "SA 101 - System Administration..."
         subject_code = row1.split("-")[0].strip()
 
         subject_doc = subjects_col.find_one({"subject_code": subject_code})
@@ -951,27 +961,30 @@ def upload_students_to_class(class_id):
             return jsonify({"error": f"Subject '{subject_code}' not found"}), 400
 
         # ----------------------------
-        # 2️⃣ Extract Course + Section (ROW 2)
+        # Extract Course + Section (Row 2)
         # ----------------------------
-        row2 = str(df.iloc[1, 0]).strip()   # Example: "BSINFOTECH 4C"
+        row2 = str(df.iloc[1, 0]).strip()  # Example: "BSINFOTECH 4C"
         parts = row2.split(" ")
 
         if len(parts) < 2:
-            return jsonify({"error": "Invalid Course/Section format in row 2"}), 400
+            return jsonify({"error": "Invalid Course/Section format in row 2. Expected 'BSINFOTECH 4C'"}), 400
 
-        course = parts[0].upper()       # BSINFOTECH
-        section = parts[1].upper()      # 4C
+        course = parts[0].upper()
+        section = parts[1].upper()
 
-        # ----------------------------
-        # 3️⃣ Extract students (starting row 4)
-        # ----------------------------
-        # Set header from row 3
-        df2 = pd.read_excel(BytesIO(file.read()), header=2)
+        # =============================
+        # 2️⃣ SECOND PASS — Read student list
+        # =============================
+        df_bytes = BytesIO(file_bytes.getvalue())  # ensure clean read
+        df2 = pd.read_excel(df_bytes, header=2)
 
         required_cols = {"Student ID", "First Name", "Last Name"}
         if not required_cols.issubset(df2.columns):
-            return jsonify({"error": f"Missing columns: {required_cols}"}), 400
+            return jsonify({"error": f"Excel missing required columns {required_cols}"}), 400
 
+        # ----------------------------
+        # Build the student list
+        # ----------------------------
         students = []
 
         for _, row in df2.iterrows():
@@ -979,7 +992,7 @@ def upload_students_to_class(class_id):
             first = str(row["First Name"]).strip()
             last = str(row["Last Name"]).strip()
 
-            # verify student exists in MongoDB
+            # Validate student exists in MongoDB
             stu = students_col.find_one({"student_id": sid})
             if not stu:
                 return jsonify({"error": f"Student {sid} not found in database"}), 400
@@ -992,9 +1005,9 @@ def upload_students_to_class(class_id):
                 "section": section
             })
 
-        # ----------------------------
-        # 4️⃣ Update class document
-        # ----------------------------
+        # =============================
+        # 3️⃣ Update Class Document
+        # =============================
         classes_col.update_one(
             {"_id": ObjectId(class_id)},
             {
@@ -1013,7 +1026,8 @@ def upload_students_to_class(class_id):
         return jsonify({
             "message": f"{len(students)} students uploaded successfully",
             "course": course,
-            "section": section
+            "section": section,
+            "subject_code": subject_code
         }), 200
 
     except Exception as e:
