@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from dotenv import load_dotenv
@@ -63,6 +63,11 @@ def not_found(_):
 @app.errorhandler(500)
 def server_error(e):
     return jsonify(error="Server error", detail=str(e)), 500
+
+@app.before_request
+def allow_options_requests():
+    if request.method == "OPTIONS":
+        return ('', 200)
 
 # --- Preload embeddings ---
 def preload_embeddings():

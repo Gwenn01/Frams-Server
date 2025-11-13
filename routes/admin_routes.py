@@ -50,6 +50,26 @@ def _serialize_subject(s):
         "created_at": s.get("created_at"),
     }
 
+# 📌 Helper to serialize class documents
+def _serialize_class(cls):
+    students = cls.get("students", [])
+    return {
+        "_id": str(cls.get("_id")),
+        "subject_code": cls.get("subject_code"),
+        "subject_title": cls.get("subject_title"),
+        "course": cls.get("course"),
+        "year_level": cls.get("year_level"),
+        "semester": cls.get("semester"),
+        "section": cls.get("section"),
+        "instructor_id": cls.get("instructor_id"),
+        "instructor_first_name": cls.get("instructor_first_name"),
+        "instructor_last_name": cls.get("instructor_last_name"),
+        "schedule_blocks": cls.get("schedule_blocks", []),
+        "student_count": len(students),
+        "students": students,
+        "created_at": cls.get("created_at"),
+    }
+
 def _admin_program():
     """
     Extracts the admin's program (BSINFOTECH or BSCS)
@@ -766,26 +786,6 @@ from datetime import datetime
 import pandas as pd
 from io import BytesIO
 
-# 📌 Helper to serialize class documents
-def _serialize_class(cls):
-    students = cls.get("students", [])
-    return {
-        "_id": str(cls.get("_id")),
-        "subject_code": cls.get("subject_code"),
-        "subject_title": cls.get("subject_title"),
-        "course": cls.get("course"),
-        "year_level": cls.get("year_level"),
-        "semester": cls.get("semester"),
-        "section": cls.get("section"),
-        "instructor_id": cls.get("instructor_id"),
-        "instructor_first_name": cls.get("instructor_first_name"),
-        "instructor_last_name": cls.get("instructor_last_name"),
-        "schedule_blocks": cls.get("schedule_blocks", []),
-        "student_count": len(students),
-        "students": students,
-        "created_at": cls.get("created_at"),
-    }
-
 # 🟢 Create new class
 @admin_bp.route("/api/classes", methods=["POST"])
 @jwt_required()
@@ -1148,6 +1148,26 @@ def delete_class(id):
 
     return jsonify({"message": "Class deleted successfully"}), 200
 
+# 🟢 Get all free classes (no instructor assigned)
+@admin_bp.route("/api/classes/free", methods=["GET"])
+@jwt_required()
+def get_free_classes():
+    admin_program = get_jwt().get("program", "").upper()
+
+    if not admin_program:
+        return jsonify([]), 200
+
+    free_classes = list(classes_col.find({
+        "course": {"$regex": f"^{admin_program}$", "$options": "i"},
+        "$or": [
+            {"instructor_id": {"$exists": False}},
+            {"instructor_id": ""},
+            {"instructor_id": None}
+        ]
+    }).sort("created_at", -1))
+
+    return jsonify([_serialize_class(cls) for cls in free_classes]), 200
+
 
 # ==============================
 # ✅ Instructor Management
@@ -1240,6 +1260,22 @@ def assign_instructor_to_class(class_id):
         import traceback
         print(traceback.format_exc())
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+    
+@admin_bp.route("/api/instructors/<instructor_id>/classes", methods=["GET"])
+@jwt_required()
+def get_classes_by_instructor(instructor_id):
+    claims = get_jwt()
+    admin_program = claims.get("program", "").upper()
+
+    # Get classes assigned to instructor
+    classes = list(classes_col.find({
+        "instructor_id": instructor_id,
+        "course": {"$regex": f"^{admin_program}$", "$options": "i"}
+    }))
+
+    serialized = [_serialize_class(cls) for cls in classes]
+
+    return jsonify(serialized), 200
 
 # ==============================
 # ✅ Attendance Logs (Admin)
