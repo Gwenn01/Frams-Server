@@ -91,7 +91,7 @@ def register_auto():
         if not student_id or not data.get("image"):
             return jsonify({"success": False, "error": "Missing student_id or image"}), 400
 
-        # 1️⃣ Call Hugging Face
+        # 1️⃣ Call Hugging Face microservice
         hf_start = time.time()
         res = requests.post(f"{HF_AI_URL}/register-auto", json=data, timeout=60)
         hf_elapsed = time.time() - hf_start
@@ -117,7 +117,12 @@ def register_auto():
             if norm > 0:
                 normalized_embeddings[angle] = (v / norm).tolist()
 
-        # 3️⃣ Upsert student
+        # 🧩 Extract Course (ensure it’s included in DB)
+        course = data.get("Course") or data.get("course")
+        if not course:
+            course = "UNKNOWN"
+
+        # 3️⃣ Upsert student record
         student_doc = students_collection.find_one_and_update(
             {"student_id": student_id},
             {
@@ -127,6 +132,7 @@ def register_auto():
                     "Middle_Name": data.get("Middle_Name"),
                     "Last_Name": data.get("Last_Name"),
                     "Suffix": data.get("Suffix"),
+                    "Course": course,  # ✅ Include course on insert
                     "registered": False,
                     "created_at": datetime.utcnow(),
                 }
@@ -135,12 +141,14 @@ def register_auto():
             return_document=True,
         )
 
+        # 4️⃣ Update with embeddings and metadata
         update_fields = {
             "student_id": student_id,
             "First_Name": data.get("First_Name") or student_doc.get("First_Name"),
             "Middle_Name": data.get("Middle_Name") or student_doc.get("Middle_Name"),
             "Last_Name": data.get("Last_Name") or student_doc.get("Last_Name"),
             "Suffix": data.get("Suffix") or student_doc.get("Suffix"),
+            "Course": course,  # ✅ Always update Course
             "registered": True,
             "embeddings": normalized_embeddings,
             "updated_at": datetime.utcnow(),
@@ -150,13 +158,13 @@ def register_auto():
 
         total_elapsed = time.time() - start_time
         current_app.logger.info(
-            f"✅ /register-auto {student_id} done in {total_elapsed:.2f}s "
-            f"(HF={hf_elapsed:.2f}s)"
+            f"✅ /register-auto {student_id} done in {total_elapsed:.2f}s (HF={hf_elapsed:.2f}s)"
         )
 
         return jsonify({
             "success": True,
             "student_id": student_id,
+            "Course": course,
             "angle": hf_result.get("angle", "unknown"),
             "message": "Registration successful and saved.",
         }), 200
@@ -166,7 +174,6 @@ def register_auto():
     except Exception as e:
         current_app.logger.error(f"❌ /register-auto error: {str(e)}\n{traceback.format_exc()}")
         return jsonify({"success": False, "error": "Internal server error"}), 500
-
 
 # ============================================================
 # 🔐 FACE LOGIN

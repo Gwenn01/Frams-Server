@@ -170,6 +170,32 @@ def login_admin():
     ), 200
 
 # ==============================
+# ✅ Admin Profile (for Student Register Page)
+# ==============================
+@admin_bp.route("/api/admin/profile", methods=["GET"])
+@jwt_required()
+def get_admin_profile():
+    """
+    Returns the logged-in admin's profile (used by StudentRegisterFaceComponent.jsx).
+    """
+    claims = get_jwt()
+    admin_id = claims.get("sub")  # stored as identity during login
+    program = claims.get("program")
+
+    # 🧩 Try to find the admin record in DB
+    admin_doc = admins_col.find_one({"user_id": admin_id})
+    if not admin_doc:
+        return jsonify({"error": "Admin not found"}), 404
+
+    return jsonify({
+        "user_id": admin_doc.get("user_id"),
+        "first_name": admin_doc.get("first_name"),
+        "last_name": admin_doc.get("last_name"),
+        "email": admin_doc.get("email"),
+        "Course": admin_doc.get("program", program or "Unknown Program")
+    }), 200
+
+# ==============================
 # ✅ Admin Overview Endpoints
 # ==============================
 @admin_bp.route("/api/admin/overview/stats", methods=["GET"])
