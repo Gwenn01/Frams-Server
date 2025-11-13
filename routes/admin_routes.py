@@ -788,6 +788,7 @@ def _serialize_class(cls):
 
 # 🟢 Create new class
 @admin_bp.route("/api/classes", methods=["POST"])
+@jwt_required()
 def create_class():
     admin_program = _admin_program() 
 
