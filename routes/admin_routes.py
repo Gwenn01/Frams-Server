@@ -937,23 +937,89 @@ def upload_students_to_class(class_id):
         return jsonify({"error": "No file uploaded"}), 400
 
     try:
-        df = pd.read_excel(BytesIO(file.read()))
-        required_cols = {"student_id", "First_Name", "Last_Name", "Course", "Section"}
-        if not required_cols.issubset(df.columns):
+        # Read Excel
+        df = pd.read_excel(BytesIO(file.read()), header=None)
+
+        # ----------------------------
+        # 1️⃣ Extract Subject (ROW 1)
+        # ----------------------------
+        row1 = str(df.iloc[0, 0]).strip()   # "SA 101 - System Administration..."
+        subject_code = row1.split("-")[0].strip()
+
+        subject_doc = subjects_col.find_one({"subject_code": subject_code})
+        if not subject_doc:
+            return jsonify({"error": f"Subject '{subject_code}' not found"}), 400
+
+        # ----------------------------
+        # 2️⃣ Extract Course + Section (ROW 2)
+        # ----------------------------
+        row2 = str(df.iloc[1, 0]).strip()   # Example: "BSINFOTECH 4C"
+        parts = row2.split(" ")
+
+        if len(parts) < 2:
+            return jsonify({"error": "Invalid Course/Section format in row 2"}), 400
+
+        course = parts[0].upper()       # BSINFOTECH
+        section = parts[1].upper()      # 4C
+
+        # ----------------------------
+        # 3️⃣ Extract students (starting row 4)
+        # ----------------------------
+        # Set header from row 3
+        df2 = pd.read_excel(BytesIO(file.read()), header=2)
+
+        required_cols = {"Student ID", "First Name", "Last Name"}
+        if not required_cols.issubset(df2.columns):
             return jsonify({"error": f"Missing columns: {required_cols}"}), 400
 
-        students = df.to_dict(orient="records")
+        students = []
 
+        for _, row in df2.iterrows():
+            sid = str(row["Student ID"]).strip()
+            first = str(row["First Name"]).strip()
+            last = str(row["Last Name"]).strip()
+
+            # verify student exists in MongoDB
+            stu = students_col.find_one({"student_id": sid})
+            if not stu:
+                return jsonify({"error": f"Student {sid} not found in database"}), 400
+
+            students.append({
+                "student_id": sid,
+                "first_name": first,
+                "last_name": last,
+                "course": course,
+                "section": section
+            })
+
+        # ----------------------------
+        # 4️⃣ Update class document
+        # ----------------------------
         classes_col.update_one(
             {"_id": ObjectId(class_id)},
-            {"$set": {"students": students}}
+            {
+                "$set": {
+                    "subject_code": subject_doc["subject_code"],
+                    "subject_title": subject_doc["subject_title"],
+                    "course": course,
+                    "section": section,
+                    "year_level": subject_doc["year_level"],
+                    "semester": subject_doc["semester"],
+                    "students": students
+                }
+            }
         )
 
-        return jsonify({"message": f"{len(students)} students uploaded successfully"}), 200
+        return jsonify({
+            "message": f"{len(students)} students uploaded successfully",
+            "course": course,
+            "section": section
+        }), 200
 
     except Exception as e:
+        import traceback
+        print(traceback.format_exc())
         return jsonify({"error": f"Failed to process file: {str(e)}"}), 500
-
 
 # 🟢 Get students assigned to a class
 @admin_bp.route("/api/classes/<class_id>/students", methods=["GET"])
