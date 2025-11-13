@@ -192,7 +192,7 @@ def get_admin_profile():
         "first_name": admin_doc.get("first_name"),
         "last_name": admin_doc.get("last_name"),
         "email": admin_doc.get("email"),
-        "Course": admin_doc.get("program", program or "Unknown Program")
+        "program": admin_doc.get("program", program or "Unknown Program")
     }), 200
 
 # ==============================
