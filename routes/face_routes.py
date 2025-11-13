@@ -98,10 +98,9 @@ def register_auto():
             }), 400
 
         # ✅ Extract and normalize Course early
-        course = data.get("Course") or data.get("course") or "UNKNOWN"
-        if isinstance(course, str):
-            course = course.strip().upper()
-        current_app.logger.info(f"📘 Received Course '{course}' for student {student_id}")
+        course = (data.get("Course") or data.get("course") or "").strip().upper() or "UNKNOWN"
+        data["course"] = course  # ✅ make sure course stays in payload
+        current_app.logger.info(f"📘 Preserved course for {student_id}: {course}")
 
         # 1️⃣ Call Hugging Face microservice
         hf_start = time.time()
