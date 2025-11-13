@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from flask_jwt_extended import create_access_token
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from pymongo import ReturnDocument
 import numpy as np
 import requests
 import time
@@ -88,8 +89,19 @@ def register_auto():
     try:
         data = request.get_json(silent=True) or {}
         student_id = data.get("student_id")
+
+        # ✅ Validate input
         if not student_id or not data.get("image"):
-            return jsonify({"success": False, "error": "Missing student_id or image"}), 400
+            return jsonify({
+                "success": False,
+                "error": "Missing student_id or image"
+            }), 400
+
+        # ✅ Extract and normalize Course early
+        course = data.get("Course") or data.get("course") or "UNKNOWN"
+        if isinstance(course, str):
+            course = course.strip().upper()
+        current_app.logger.info(f"📘 Received Course '{course}' for student {student_id}")
 
         # 1️⃣ Call Hugging Face microservice
         hf_start = time.time()
@@ -98,11 +110,18 @@ def register_auto():
 
         if res.status_code != 200:
             current_app.logger.warning(f"⚠️ HF service error {res.status_code}: {res.text}")
-            return jsonify({"success": False, "error": "Hugging Face service error"}), res.status_code
+            return jsonify({
+                "success": False,
+                "error": "Hugging Face service error"
+            }), res.status_code
 
         hf_result = res.json()
         if not hf_result.get("success") or not hf_result.get("embeddings"):
-            warning_msg = hf_result.get("warning") or hf_result.get("error") or "No embeddings returned"
+            warning_msg = (
+                hf_result.get("warning") or
+                hf_result.get("error") or
+                "No embeddings returned"
+            )
             return jsonify({
                 "success": False,
                 "warning": warning_msg,
@@ -117,12 +136,7 @@ def register_auto():
             if norm > 0:
                 normalized_embeddings[angle] = (v / norm).tolist()
 
-        # 🧩 Extract Course (ensure it’s included in DB)
-        course = data.get("Course") or data.get("course")
-        if not course:
-            course = "UNKNOWN"
-
-        # 3️⃣ Upsert student record
+        # 3️⃣ Upsert student record (ReturnDocument.AFTER ensures new doc)
         student_doc = students_collection.find_one_and_update(
             {"student_id": student_id},
             {
@@ -132,28 +146,35 @@ def register_auto():
                     "Middle_Name": data.get("Middle_Name"),
                     "Last_Name": data.get("Last_Name"),
                     "Suffix": data.get("Suffix"),
-                    "Course": course,  # ✅ Include course on insert
+                    "Course": course,
                     "registered": False,
                     "created_at": datetime.utcnow(),
                 }
             },
             upsert=True,
-            return_document=True,
+            return_document=ReturnDocument.AFTER,  # ✅ ensures updated doc is returned
         )
 
-        # 4️⃣ Update with embeddings and metadata
+        # 4️⃣ Prepare update fields for async save
         update_fields = {
             "student_id": student_id,
             "First_Name": data.get("First_Name") or student_doc.get("First_Name"),
             "Middle_Name": data.get("Middle_Name") or student_doc.get("Middle_Name"),
             "Last_Name": data.get("Last_Name") or student_doc.get("Last_Name"),
             "Suffix": data.get("Suffix") or student_doc.get("Suffix"),
-            "Course": course,  # ✅ Always update Course
+            "Course": course,
             "registered": True,
             "embeddings": normalized_embeddings,
             "updated_at": datetime.utcnow(),
         }
 
+        # ✅ Ensure Course consistency in DB
+        students_collection.update_one(
+            {"student_id": student_id},
+            {"$set": {"Course": course}}
+        )
+
+        # ✅ Save asynchronously
         executor.submit(save_face_data, student_id, update_fields)
 
         total_elapsed = time.time() - start_time
@@ -170,10 +191,19 @@ def register_auto():
         }), 200
 
     except requests.exceptions.Timeout:
-        return jsonify({"success": False, "error": "AI service timeout"}), 504
+        return jsonify({
+            "success": False,
+            "error": "AI service timeout"
+        }), 504
+
     except Exception as e:
-        current_app.logger.error(f"❌ /register-auto error: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({"success": False, "error": "Internal server error"}), 500
+        current_app.logger.error(
+            f"❌ /register-auto error: {str(e)}\n{traceback.format_exc()}"
+        )
+        return jsonify({
+            "success": False,
+            "error": "Internal server error"
+        }), 500
 
 # ============================================================
 # 🔐 FACE LOGIN
