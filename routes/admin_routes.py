@@ -796,19 +796,25 @@ def _serialize_class(cls):
         "created_at": cls.get("created_at"),
     }
 
-
 # 🟢 Create new class
 @admin_bp.route("/api/classes", methods=["POST"])
 def create_class():
     data = request.get_json() or {}
+
     required_fields = [
         "subject_code", "subject_title", "course",
-        "year_level", "semester", "section"
+        "year_level", "semester", "section", "instructor_id"
     ]
 
     if not all(data.get(field) for field in required_fields):
         return jsonify({"error": "Missing required fields"}), 400
 
+    # 🔍 Fetch Instructor
+    instructor = instructors_col.find_one({"instructor_id": data["instructor_id"]})
+    if not instructor:
+        return jsonify({"error": "Instructor not found"}), 404
+
+    # 🧩 Build the class document
     new_class = {
         "subject_code": data["subject_code"],
         "subject_title": data["subject_title"],
@@ -817,17 +823,24 @@ def create_class():
         "semester": data["semester"],
         "section": data["section"],
         "schedule_blocks": data.get("schedule_blocks", []),
-        "instructor_id": None,
-        "instructor_first_name": None,
-        "instructor_last_name": None,
+
+        # ✅ Correct instructor assignment
+        "instructor_id": instructor["instructor_id"],
+        "instructor_first_name": instructor["first_name"],
+        "instructor_last_name": instructor["last_name"],
+
+        # Defaults
         "students": [],
+        "is_attendance_active": False,
+        "attendance_start_time": None,
+        "attendance_end_time": None,
         "created_at": datetime.utcnow(),
     }
 
     result = classes_col.insert_one(new_class)
     cls = classes_col.find_one({"_id": result.inserted_id})
-    return jsonify(_serialize_class(cls)), 201
 
+    return jsonify(_serialize_class(cls)), 201
 
 # 🟢 Get all classes (with attendance breakdown)
 @admin_bp.route("/api/classes", methods=["GET"])
