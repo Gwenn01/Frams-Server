@@ -24,9 +24,6 @@ def save_face_data(student_id, update_fields):
             "Middle_Name": update_fields.get("Middle_Name"),
             "Last_Name": update_fields.get("Last_Name"),
             "Suffix": update_fields.get("Suffix"),
-            "Email": update_fields.get("Email"),
-            "Contact_Number": update_fields.get("Contact_Number"),
-            "Subjects": update_fields.get("Subjects", []),
             "registered": True,
         }
 
