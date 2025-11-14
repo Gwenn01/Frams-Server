@@ -401,7 +401,7 @@ def get_instructor_config(instructor_id):
 @jwt_required()  # Ensure the instructor is logged in
 def get_instructor_profile():
     instructor_id = get_jwt_identity()  # Get the logged-in instructor's ID
-    
+
     # Fetch the instructor's data from the database
     instructor = instructors_collection.find_one({"instructor_id": instructor_id})
 
@@ -411,9 +411,12 @@ def get_instructor_profile():
     # Check face registration status
     face_registered = "Yes" if instructor.get("face_embedding") else "No"
 
+    # Combine first name and last name for the profile
+    full_name = f"{instructor.get('first_name', '')} {instructor.get('last_name', '')}"
+
     # Return profile data including face registration status
     return jsonify({
-        "name": instructor["name"],
-        "email": instructor["email"],
+        "name": full_name,  # Use the full name instead of 'name'
+        "email": instructor.get("email", ""),
         "face_registered": face_registered,
     }), 200
