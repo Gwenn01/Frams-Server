@@ -4,6 +4,7 @@ from datetime import datetime  # ✅ FIXED import
 # Collections
 students_collection = db["students"]
 attendance_collection = db["attendance_logs"]
+instructors_collection = db["instructors"]
 
 # -----------------------------
 # Save / Update student face data
@@ -51,6 +52,51 @@ def save_face_data(student_id, update_fields):
 
         updated_angles = list(embeddings.keys()) if embeddings else []
         print(f"✅ Face data saved for {student_id}. Updated angles: {updated_angles}")
+        return True
+
+    except Exception as e:
+        import traceback
+        print("❌ MongoDB save error:", str(e))
+        print(traceback.format_exc())
+        return False
+    
+# -----------------------------
+# Save / Update Instructor face data (only `registered` and `embeddings`)
+# -----------------------------
+def save_face_data_for_instructor(instructor_id, update_fields):
+    try:
+        if not instructor_id or not update_fields:
+            print("❌ Missing instructor_id or update_fields.")
+            return False
+
+        # 🧠 Extract embeddings separately
+        embeddings = update_fields.pop("embeddings", None)
+
+        # ✅ Prepare update operation for the instructor
+        set_ops = {
+            "registered": True,  # Mark as registered
+        }
+
+        # ✅ Only store embeddings if they exist
+        if embeddings and isinstance(embeddings, dict):
+            for angle, vector in embeddings.items():
+                if vector and isinstance(vector, list):
+                    set_ops[f"embeddings.{angle}"] = vector
+
+        # ✅ Final MongoDB update for instructors
+        update_ops = {
+            "$set": set_ops,
+            "$setOnInsert": {"created_at": datetime.utcnow()},
+        }
+
+        result = instructors_collection.update_one(
+            {"instructor_id": instructor_id},
+            update_ops,
+            upsert=True  # Insert if instructor_id doesn't exist
+        )
+
+        updated_angles = list(embeddings.keys()) if embeddings else []
+        print(f"✅ Face data saved for instructor {instructor_id}. Updated angles: {updated_angles}")
         return True
 
     except Exception as e:

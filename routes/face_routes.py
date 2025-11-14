@@ -17,6 +17,7 @@ from models.face_db_model import (
     get_student_by_id,
     normalize_student,
     load_registered_faces,
+    save_face_data_for_instructor
 )
 from models.attendance_model import log_attendance as log_attendance_model, already_logged_today
 
@@ -263,6 +264,94 @@ def face_login():
         current_app.logger.error(f"❌ /login error: {traceback.format_exc()}")
         return jsonify({"error": "Internal server error"}), 500
 
+@face_bp.route("/register-instructor", methods=["POST"])
+def register_instructor():
+    start_time = time.time()
+    try:
+        data = request.get_json(silent=True) or {}
+        instructor_id = data.get("instructor_id")  # Expecting instructor_id
+
+        # ✅ Validate input
+        if not instructor_id or not data.get("image"):
+            return jsonify({
+                "success": False,
+                "error": "Missing instructor_id or image"
+            }), 400
+
+        # 1️⃣ Call Hugging Face microservice for face recognition
+        hf_start = time.time()
+        res = requests.post(f"{HF_AI_URL}/register_instructor_face", json=data, timeout=60)
+        hf_elapsed = time.time() - hf_start
+
+        if res.status_code != 200:
+            current_app.logger.warning(f"⚠️ HF service error {res.status_code}: {res.text}")
+            return jsonify({
+                "success": False,
+                "error": "Hugging Face service error"
+            }), res.status_code
+
+        hf_result = res.json()
+        if not hf_result.get("success") or not hf_result.get("embeddings"):
+            warning_msg = (
+                hf_result.get("warning") or
+                hf_result.get("error") or
+                "No embeddings returned"
+            )
+            return jsonify({
+                "success": False,
+                "warning": warning_msg,
+                "angle": hf_result.get("angle", "unknown"),
+            }), 200
+
+        # 2️⃣ Normalize embeddings
+        normalized_embeddings = {}
+        for angle, vec in hf_result["embeddings"].items():
+            v = np.array(vec, dtype=np.float32)
+            norm = np.linalg.norm(v)
+            if norm > 0:
+                normalized_embeddings[angle] = (v / norm).tolist()
+
+        # 3️⃣ Prepare update fields for async save (remove Course for instructors)
+        update_fields = {
+            "instructor_id": instructor_id,
+            "First_Name": data.get("First_Name"),
+            "Middle_Name": data.get("Middle_Name"),
+            "Last_Name": data.get("Last_Name"),
+            "Suffix": data.get("Suffix"),
+            "registered": True,  # Mark instructor as registered
+            "embeddings": normalized_embeddings,  # Store embeddings for each angle
+            "updated_at": datetime.utcnow(),
+        }
+
+        # 4️⃣ Save the face data (embeddings) for the instructor in MongoDB
+        save_face_data_for_instructor(instructor_id, update_fields)
+
+        total_elapsed = time.time() - start_time
+        current_app.logger.info(
+            f"✅ /register-instructor {instructor_id} done in {total_elapsed:.2f}s (HF={hf_elapsed:.2f}s)"
+        )
+
+        return jsonify({
+            "success": True,
+            "instructor_id": instructor_id,
+            "angle": hf_result.get("angle", "unknown"),
+            "message": "Registration successful and saved.",
+        }), 200
+
+    except requests.exceptions.Timeout:
+        return jsonify({
+            "success": False,
+            "error": "AI service timeout"
+        }), 504
+
+    except Exception as e:
+        current_app.logger.error(
+            f"❌ /register-instructor error: {str(e)}\n{traceback.format_exc()}"
+        )
+        return jsonify({
+            "success": False,
+            "error": "Internal server error"
+        }), 500
 
 # ============================================================
 # 🌐 MULTI-FACE ATTENDANCE

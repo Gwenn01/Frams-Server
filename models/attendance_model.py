@@ -79,6 +79,7 @@ def log_attendance(class_data, student_data, status="Present", date_val=None, cl
         base_filter,
         {"$setOnInsert": {
             "class_id": class_data["class_id"],
+            "class_info": class_data,
             "subject_code": class_data.get("subject_code"),
             "subject_title": class_data.get("subject_title"),
             "instructor_id": class_data.get("instructor_id"),

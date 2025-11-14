@@ -13,9 +13,12 @@ from models.class_model import get_all_classes_with_details
 
 instructor_bp = Blueprint("instructor", __name__)
 
+HF_AI_URL = "https://your-hugging-face-space-url"
+
 students_collection = db["students"]
 classes_collection = db["classes"]
 attendance_collection = db["attendance_logs"]
+instructors_collection = db["instructors"]
 
 # -------------------------------------------------
 # 🔹 Instructor Registration
@@ -393,3 +396,24 @@ def get_instructor_config(instructor_id):
         import traceback
         print("❌ Error in /api/instructor/config/<instructor_id>:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
+    
+@instructor_bp.route("/profile", methods=["GET"])
+@jwt_required()  # Ensure the instructor is logged in
+def get_instructor_profile():
+    instructor_id = get_jwt_identity()  # Get the logged-in instructor's ID
+    
+    # Fetch the instructor's data from the database
+    instructor = instructors_collection.find_one({"instructor_id": instructor_id})
+
+    if not instructor:
+        return jsonify({"message": "Instructor not found!"}), 404
+
+    # Check face registration status
+    face_registered = "Yes" if instructor.get("face_embedding") else "No"
+
+    # Return profile data including face registration status
+    return jsonify({
+        "name": instructor["name"],
+        "email": instructor["email"],
+        "face_registered": face_registered,
+    }), 200
