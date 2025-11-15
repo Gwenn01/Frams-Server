@@ -397,6 +397,7 @@ def multi_face_recognize():
             "section": cls.get("section", ""),
             "year_level": cls.get("year_level", ""),
             "semester": cls.get("semester", ""),
+            "school_year": cls.get("school_year", ""),
             "instructor_id": cls.get("instructor_id", ""),
             "instructor_first_name": cls.get("instructor_first_name", "Unknown"),
             "instructor_last_name": cls.get("instructor_last_name", "Unknown"),
