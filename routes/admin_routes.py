@@ -20,6 +20,7 @@ classes_col = db["classes"]
 attendance_logs_col = db["attendance_logs"]
 subjects_col = db["subjects"]
 admins_col = db["admins"]
+semesters_col = db["semesters"]
 
 # -------------------------------
 # Helpers
