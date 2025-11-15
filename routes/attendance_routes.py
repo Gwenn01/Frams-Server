@@ -23,6 +23,8 @@ from models.attendance_model import (
 
 attendance_bp = Blueprint("attendance", __name__)
 
+attendance_logs_col = db["attendance_logs"]
+
 # -----------------------------
 # Timezone
 # -----------------------------
@@ -286,62 +288,68 @@ def has_logged():
         print("❌ Error in /has-logged:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
 
-# ✅ Get attendance logs for a class (GROUPED BY DATE)
-@attendance_bp.route("/logs/<class_id>", methods=["GET"])
-def get_logs(class_id):
+# ✅ Get attendance logs grouped by date (NOT BY CLASS)
+@attendance_bp.route("/logs", methods=["GET"])
+def get_all_logs_grouped():
     try:
-        start = request.args.get("start")
-        end = request.args.get("end")
+        class_id = request.args.get("class_id")   # optional
+        date_start = request.args.get("start")
+        date_end = request.args.get("end")
 
-        # Force class_id to string to match DB storage
-        class_id = str(class_id)
+        query = {}
 
-        # Fetch raw logs from DB
-        if start and end:
-            raw_logs = get_attendance_logs_by_class_and_date(class_id, start, end)
-        else:
-            raw_logs = get_attendance_by_class(class_id)
+        # Optional filters
+        if class_id:
+            query["class_id"] = str(class_id)
+
+        if date_start and date_end:
+            query["date"] = {"$gte": date_start, "$lte": date_end}
+
+        # 🔥 Fetch everything from attendance_logs
+        raw_logs = list(attendance_logs_col.find(query))
 
         grouped = {}
 
         for log in raw_logs:
             date = log.get("date")
+            if not date:
+                continue
 
-            # Initialize date container
             if date not in grouped:
                 grouped[date] = {
                     "date": date,
-                    "class_id": class_id,
-                    "students": [],
-                    "unique_students": {}  # for deduping
+                    "logs": [],            # full attendance_logs documents
+                    "students": [],        # all students combined
+                    "unique_students": {}  # dedupe
                 }
 
-            # Process students
+            # Convert _id to string
+            log["_id"] = str(log["_id"])
+
+            # 🔥 Append the FULL DOCUMENT (no trimming)
+            grouped[date]["logs"].append(log)
+
+            # Collect students (dedupe by student_id)
             for s in log.get("students", []):
                 sid = s.get("student_id")
-                if not sid:
-                    continue
+                if sid:
+                    grouped[date]["unique_students"][sid] = s
 
-                # Keep latest status per student
-                grouped[date]["unique_students"][sid] = s
-
-        # Finalize grouped logs
-        grouped_list = []
-
-        for date, obj in grouped.items():
-            grouped_list.append({
+        # Final formatting
+        result = []
+        for date, entry in grouped.items():
+            result.append({
                 "date": date,
-                "class_id": class_id,
-                "students": list(obj["unique_students"].values())  # deduped
+                "logs": entry["logs"],                      # FULL documents
+                "students": list(entry["unique_students"].values())  # deduped students
             })
 
-        # Sort by date descending
-        grouped_list.sort(key=lambda x: x["date"], reverse=True)
+        # Sort by date DESC
+        result.sort(key=lambda x: x["date"], reverse=True)
 
         return jsonify({
             "success": True,
-            "class_id": class_id,
-            "logs": grouped_list
+            "logs": result
         }), 200
 
     except Exception:
