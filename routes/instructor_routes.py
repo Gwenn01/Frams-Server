@@ -416,6 +416,7 @@ def get_instructor_profile():
 
     # Return profile data including face registration status
     return jsonify({
+        "instructor_id": instructor.get("instructor_id", ""),
         "name": full_name,  # Use the full name instead of 'name'
         "email": instructor.get("email", ""),
         "face_registered": face_registered,
