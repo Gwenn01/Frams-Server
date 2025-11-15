@@ -13,8 +13,6 @@ from models.class_model import get_all_classes_with_details
 
 instructor_bp = Blueprint("instructor", __name__)
 
-HF_AI_URL = "https://your-hugging-face-space-url"
-
 students_collection = db["students"]
 classes_collection = db["classes"]
 attendance_collection = db["attendance_logs"]
@@ -421,3 +419,65 @@ def get_instructor_profile():
         "email": instructor.get("email", ""),
         "face_registered": face_registered,
     }), 200
+
+@instructor_bp.route("/attendance-report/<class_id>", methods=["GET"])
+@jwt_required()
+def get_instructor_attendance_report(class_id):
+    try:
+        instructor = get_jwt()   # JWT payload
+        instructor_id = instructor.get("instructor_id")
+
+        if not instructor_id:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        # 🔒 SECURE: Only classes owned by instructor are allowed
+        class_doc = classes_col.find_one({
+            "class_id": class_id,
+            "instructor_id": instructor_id
+        })
+
+        if not class_doc:
+            return jsonify({"error": "Access denied. Class not found."}), 403
+
+        # Optional date filters
+        date_start = request.args.get("start")
+        date_end = request.args.get("end")
+
+        query = {"class_id": class_id}
+
+        if date_start and date_end:
+            query["date"] = {"$gte": date_start, "$lte": date_end}
+
+        # Fetch logs
+        raw_logs = list(attendance_collection.find(query))
+
+        grouped = {}
+
+        for log in raw_logs:
+            date = log.get("date")
+            if not date:
+                continue
+
+            if date not in grouped:
+                grouped[date] = {
+                    "date": date,
+                    "students": []
+                }
+
+            for s in log.get("students", []):
+                grouped[date]["students"].append(s)
+
+        result = list(grouped.values())
+        result.sort(key=lambda x: x["date"], reverse=True)
+
+        return jsonify({
+            "success": True,
+            "class_id": class_id,
+            "logs": result
+        }), 200
+
+    except Exception:
+        import traceback
+        print("❌ ERROR in /attendance-report:", traceback.format_exc())
+        return jsonify({"error": "Internal server error"}), 500
+
