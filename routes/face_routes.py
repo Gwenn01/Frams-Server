@@ -280,7 +280,7 @@ def register_instructor():
 
         # 1️⃣ Call Hugging Face microservice for face recognition
         hf_start = time.time()
-        res = requests.post(f"{HF_AI_URL}/register_instructor_face", json=data, timeout=60)
+        res = requests.post(f"{HF_AI_URL}/register-instructor", json=data, timeout=60)
         hf_elapsed = time.time() - hf_start
 
         if res.status_code != 200:
