@@ -409,7 +409,7 @@ def get_instructor_profile():
         return jsonify({"message": "Instructor not found!"}), 404
 
     # Check face registration status
-    face_registered = "Yes" if instructor.get("face_embedding") else "No"
+    face_registered = "Yes" if instructor.get("embeddings") else "No"
 
     # Combine first name and last name for the profile
     full_name = f"{instructor.get('first_name', '')} {instructor.get('last_name', '')}"
