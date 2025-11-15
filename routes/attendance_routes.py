@@ -293,32 +293,50 @@ def get_logs(class_id):
         start = request.args.get("start")
         end = request.args.get("end")
 
-        # Get raw logs
+        # Force class_id to string to match DB storage
+        class_id = str(class_id)
+
+        # Fetch raw logs from DB
         if start and end:
             raw_logs = get_attendance_logs_by_class_and_date(class_id, start, end)
         else:
             raw_logs = get_attendance_by_class(class_id)
 
-        # GROUP BY DATE
         grouped = {}
 
         for log in raw_logs:
             date = log.get("date")
 
+            # Initialize date container
             if date not in grouped:
                 grouped[date] = {
-                    "_id": str(log["_id"]),
-                    "class_id": class_id,
                     "date": date,
-                    "students": []
+                    "class_id": class_id,
+                    "students": [],
+                    "unique_students": {}  # for deduping
                 }
 
-            # append students
-            if isinstance(log.get("students"), list):
-                grouped[date]["students"].extend(log["students"])
+            # Process students
+            for s in log.get("students", []):
+                sid = s.get("student_id")
+                if not sid:
+                    continue
 
-        # Convert to array
-        grouped_list = list(grouped.values())
+                # Keep latest status per student
+                grouped[date]["unique_students"][sid] = s
+
+        # Finalize grouped logs
+        grouped_list = []
+
+        for date, obj in grouped.items():
+            grouped_list.append({
+                "date": date,
+                "class_id": class_id,
+                "students": list(obj["unique_students"].values())  # deduped
+            })
+
+        # Sort by date descending
+        grouped_list.sort(key=lambda x: x["date"], reverse=True)
 
         return jsonify({
             "success": True,
@@ -330,7 +348,6 @@ def get_logs(class_id):
         import traceback
         print("❌ Error in /logs:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
-
 
 # ✅ Bulk mark ABSENT for students (manual)
 @attendance_bp.route("/mark-absent", methods=["POST"])
