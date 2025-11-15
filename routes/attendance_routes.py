@@ -286,31 +286,51 @@ def has_logged():
         print("❌ Error in /has-logged:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
 
-# ✅ Get attendance logs for a class
+# ✅ Get attendance logs for a class (GROUPED BY DATE)
 @attendance_bp.route("/logs/<class_id>", methods=["GET"])
 def get_logs(class_id):
     try:
         start = request.args.get("start")
         end = request.args.get("end")
 
+        # Get raw logs
         if start and end:
-            docs = get_attendance_logs_by_class_and_date(class_id, start, end)
+            raw_logs = get_attendance_logs_by_class_and_date(class_id, start, end)
         else:
-            docs = get_attendance_by_class(class_id)
+            raw_logs = get_attendance_by_class(class_id)
 
-        for d in docs:
-            d["_id"] = str(d["_id"])
+        # GROUP BY DATE
+        grouped = {}
+
+        for log in raw_logs:
+            date = log.get("date")
+
+            if date not in grouped:
+                grouped[date] = {
+                    "_id": str(log["_id"]),
+                    "class_id": class_id,
+                    "date": date,
+                    "students": []
+                }
+
+            # append students
+            if isinstance(log.get("students"), list):
+                grouped[date]["students"].extend(log["students"])
+
+        # Convert to array
+        grouped_list = list(grouped.values())
 
         return jsonify({
             "success": True,
             "class_id": class_id,
-            "logs": docs
+            "logs": grouped_list
         }), 200
 
     except Exception:
         import traceback
         print("❌ Error in /logs:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
+
 
 # ✅ Bulk mark ABSENT for students (manual)
 @attendance_bp.route("/mark-absent", methods=["POST"])
