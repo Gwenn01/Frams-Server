@@ -431,7 +431,7 @@ def get_instructor_attendance_report(class_id):
             return jsonify({"error": "Unauthorized"}), 401
 
         # 🔒 SECURE: Only classes owned by instructor are allowed
-        class_doc = classes_col.find_one({
+        class_doc = classes_collection.find_one({
             "class_id": class_id,
             "instructor_id": instructor_id
         })
