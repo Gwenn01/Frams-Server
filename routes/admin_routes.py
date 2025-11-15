@@ -751,8 +751,6 @@ def activate_single_semester():
     except Exception as e:
         print("❌ PUT /semester/activate error:", e)
         return jsonify({"error": str(e)}), 500
-    
-
 
 @admin_bp.route("/api/admin/subjects/active", methods=["GET"])
 @jwt_required()
@@ -812,14 +810,22 @@ def create_class():
 
     required_fields = [
         "subject_code", "subject_title", "course",
-        "year_level", "semester", "section", "instructor_id"
+        "year_level", "section", "instructor_id"
     ]
+
+    # Remove “semester” because backend will auto-detect
+    # "semester" removed intentionally
 
     if not all(data.get(field) for field in required_fields):
         return jsonify({"error": "Missing required fields"}), 400
     
     if data["course"].upper() != admin_program:
         return jsonify({"error": "You are not allowed to create a class for another program"}), 403
+
+    # ---- 🔥 Fetch Active Semester ----
+    active_sem = semesters_col.find_one({"is_active": True})
+    if not active_sem:
+        return jsonify({"error": "No active semester found. Please set an active semester first."}), 400
 
     # 🔍 Fetch Instructor
     instructor = instructors_col.find_one({"instructor_id": data["instructor_id"]})
@@ -832,11 +838,17 @@ def create_class():
         "subject_title": data["subject_title"],
         "course": data["course"],
         "year_level": data["year_level"],
-        "semester": data["semester"],
+
+        # ---------------------------------------------
+        # 🔥 AUTO-ASSIGN SEMESTER + SCHOOL YEAR HERE
+        # ---------------------------------------------
+        "semester": active_sem["semester_name"],
+        "school_year": active_sem["school_year"],
+
         "section": data["section"],
         "schedule_blocks": data.get("schedule_blocks", []),
 
-        # ✅ Correct instructor assignment
+        # Instructor
         "instructor_id": instructor["instructor_id"],
         "instructor_first_name": instructor["first_name"],
         "instructor_last_name": instructor["last_name"],
