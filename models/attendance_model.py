@@ -44,6 +44,7 @@ def log_attendance(class_data, student_data, status="Present", date_val=None, cl
     """
     Record student attendance. Marks as Late if 15–30 minutes late.
     Does NOT log if >30 minutes late. Automatically avoids duplicates.
+    Saves start_time and end_time per session.
     """
     now = _now_datetime()
     date_val = _parse_date_str(date_val or _today_date_str())
@@ -57,68 +58,88 @@ def log_attendance(class_data, student_data, status="Present", date_val=None, cl
                 ).astimezone(PH_TZ)
             except Exception:
                 class_start_time = None
+
         if isinstance(class_start_time, datetime):
             if class_start_time.tzinfo is None:
                 class_start_time = class_start_time.replace(tzinfo=PH_TZ)
+
             minutes_late = (now - class_start_time).total_seconds() / 60
+
             if 15 <= minutes_late < 30:
                 status = "Late"
             elif minutes_late >= 30:
                 print("⛔ Too late (>30 min). No log created.")
                 return None
 
-    # 🚫 Prevent duplicates
+    # 🚫 Prevent duplicate logs for today
     if already_logged_today(student_data["student_id"], class_data["class_id"], date_val):
         print(f"⚠️ {student_data['student_id']} already logged today — skipping.")
         return None
 
     base_filter = {"class_id": class_data["class_id"], "date": date_val}
 
-    # Ensure class/day record exists
+    # 🟢 Ensure session exists — also store start_time if this is first log
     attendance_logs_collection.update_one(
         base_filter,
-        {"$setOnInsert": {
-            "class_id": class_data["class_id"],
-            "subject_code": class_data.get("subject_code"),
-            "subject_title": class_data.get("subject_title"),
-            "instructor_id": class_data.get("instructor_id"),
-            "instructor_first_name": class_data.get("instructor_first_name"),
-            "instructor_last_name": class_data.get("instructor_last_name"),
-            "course": class_data.get("course"),
-            "section": class_data.get("section"),
-            "school_year": class_data.get("school_year"),
-            "semester": class_data.get("semester"),
-            "date": date_val,
-            "students": []
-        }},
+        {
+            "$setOnInsert": {
+                "class_id": class_data["class_id"],
+                "subject_code": class_data.get("subject_code"),
+                "subject_title": class_data.get("subject_title"),
+                "instructor_id": class_data.get("instructor_id"),
+                "instructor_first_name": class_data.get("instructor_first_name"),
+                "instructor_last_name": class_data.get("instructor_last_name"),
+                "course": class_data.get("course"),
+                "section": class_data.get("section"),
+                "school_year": class_data.get("school_year"),
+                "semester": class_data.get("semester"),
+                "date": date_val,
+                "students": [],
+                "start_time": _now_time_str(),     # ⬅️ FIRST TIME LOG
+                "end_time": None                   # ⬅️ FILLED LATER
+            }
+        },
         upsert=True
     )
 
-    # Update existing entry if found
+    # 🟡 Try update existing student record
     res = attendance_logs_collection.update_one(
         {**base_filter, "students.student_id": student_data["student_id"]},
-        {"$set": {
-            "students.$.first_name": student_data["first_name"],
-            "students.$.last_name": student_data["last_name"],
-            "students.$.status": status,
-            "students.$.time": _now_time_str(),
-            "students.$.time_logged": now
-        }}
+        {
+            "$set": {
+                "students.$.first_name": student_data["first_name"],
+                "students.$.last_name": student_data["last_name"],
+                "students.$.status": status,
+                "students.$.time": _now_time_str(),
+                "students.$.time_logged": now,
+                "end_time": _now_time_str()        # ⬅️ UPDATE END TIME
+            }
+        }
     )
 
-    # If no entry updated, push a new one
+    # 🟣 If no update, push new student
     if res.modified_count == 0:
         attendance_logs_collection.update_one(
             base_filter,
-            {"$push": {"students": {
-                "student_id": student_data["student_id"],
-                "first_name": student_data["first_name"],
-                "last_name": student_data["last_name"],
-                "status": status,
-                "time": _now_time_str(),
-                "time_logged": now
-            }}}
+            {
+                "$push": {
+                    "students": {
+                        "student_id": student_data["student_id"],
+                        "first_name": student_data["first_name"],
+                        "last_name": student_data["last_name"],
+                        "status": status,
+                        "time": _now_time_str(),
+                        "time_logged": now
+                    }
+                },
+                "$set": {
+                    "end_time": _now_time_str()    # ⬅️ every new log updates end_time
+                }
+            }
         )
+
+    return True
+
 
 # -----------------------------
 # Queries
@@ -201,39 +222,57 @@ def get_attendance_logs_by_class_and_date(class_id, start_date, end_date):
 
 def mark_absent_bulk(class_data, date_val, student_list):
     date_val = _parse_date_str(date_val)
+    now = _now_datetime()
+    now_time_str = _now_time_str()
+
     base_filter = {"class_id": class_data["class_id"], "date": date_val}
 
+    # 🟢 Ensure the attendance session exists (FIRST TIME ONLY)
     attendance_logs_collection.update_one(
         base_filter,
-        {"$setOnInsert": {
-            "class_id": class_data["class_id"],
-            "subject_code": class_data.get("subject_code"),
-            "subject_title": class_data.get("subject_title"),
-            "instructor_id": class_data.get("instructor_id"),
-            "instructor_first_name": class_data.get("instructor_first_name"),
-            "instructor_last_name": class_data.get("instructor_last_name"),
-            "course": class_data.get("course"),
-            "section": class_data.get("section"),
-            "school_year": class_data.get("school_year"),
-            "semester": class_data.get("semester"),
-            "date": date_val,
-            "students": []
-        }},
+        {
+            "$setOnInsert": {
+                "class_id": class_data["class_id"],
+                "subject_code": class_data.get("subject_code"),
+                "subject_title": class_data.get("subject_title"),
+                "instructor_id": class_data.get("instructor_id"),
+                "instructor_first_name": class_data.get("instructor_first_name"),
+                "instructor_last_name": class_data.get("instructor_last_name"),
+                "course": class_data.get("course"),
+                "section": class_data.get("section"),
+                "school_year": class_data.get("school_year"),
+                "semester": class_data.get("semester"),
+                "date": date_val,
+                "students": [],
+                "start_time": now_time_str,   # ⬅️ FIRST attendance log of the day
+                "end_time": None              # ⬅️ updated later
+            }
+        },
         upsert=True
     )
 
-    now = _now_datetime()
+    # 🟡 Insert absent logs (NO DUPLICATES)
     for s in student_list:
         attendance_logs_collection.update_one(
-            {**base_filter, "students.student_id": {"$ne": s["student_id"]}},
-            {"$push": {"students": {
-                "student_id": s["student_id"],
-                "first_name": s["first_name"],
-                "last_name": s["last_name"],
-                "status": "Absent",
-                "time": _now_time_str(),
-                "time_logged": now
-            }}}
+            {
+                **base_filter,
+                "students.student_id": {"$ne": s["student_id"]}  # Prevent duplicates
+            },
+            {
+                "$push": {
+                    "students": {
+                        "student_id": s["student_id"],
+                        "first_name": s["first_name"],
+                        "last_name": s["last_name"],
+                        "status": "Absent",
+                        "time": now_time_str,
+                        "time_logged": now
+                    }
+                },
+                "$set": {
+                    "end_time": now_time_str  # ⬅️ UPDATE SESSION END TIME
+                }
+            }
         )
 
 # -----------------------------
