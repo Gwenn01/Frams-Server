@@ -60,6 +60,7 @@ def _serialize_class(cls):
         "course": cls.get("course"),
         "year_level": cls.get("year_level"),
         "semester": cls.get("semester"),
+        "school_year": cls.get("school_year"),
         "section": cls.get("section"),
         "instructor_id": cls.get("instructor_id"),
         "instructor_first_name": cls.get("instructor_first_name"),
