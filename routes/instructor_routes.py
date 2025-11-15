@@ -424,7 +424,7 @@ def get_instructor_profile():
 @jwt_required()
 def get_class_sessions(class_id):
     try:
-        instructor_id = get_jwt().get("instructor_id")
+        instructor_id = get_jwt_identity()
 
         if not instructor_id:
             return jsonify({"error": "Unauthorized"}), 403
