@@ -13,6 +13,7 @@ allowed_origins = [
     "https://face-recognition-attendance-monitor.vercel.app",
     "https://meuorii-face-recognition-attendance.hf.space",
 ]
+
 CORS(
     app,
     resources={r"/*": {"origins": allowed_origins}},

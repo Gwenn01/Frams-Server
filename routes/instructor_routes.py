@@ -429,11 +429,13 @@ def get_class_sessions(class_id):
         if not instructor_id:
             return jsonify({"error": "Unauthorized"}), 403
 
+        # 🔥 Correct filter based on your DB
         sessions = list(attendance_collection.find({
-            "class_id": str(class_id),
+            "class_id": class_id,
             "instructor_id": instructor_id
         }).sort("date", -1))
 
+        # convert _id to string
         for s in sessions:
             s["_id"] = str(s["_id"])
 
@@ -442,6 +444,7 @@ def get_class_sessions(class_id):
             "class_id": class_id,
             "sessions": sessions
         }), 200
+
     except Exception as e:
         print("❌ ERROR /class-sessions:", e)
         return jsonify({"error": "Internal server error"}), 500
