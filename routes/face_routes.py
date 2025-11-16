@@ -356,9 +356,11 @@ def register_instructor():
 # ============================================================
 # 🌐 MULTI-FACE ATTENDANCE
 # ============================================================
+# ============================================================
+# 🌐 MULTI-FACE ATTENDANCE — FINAL FIXED VERSION
+# ============================================================
 @face_bp.route("/multi-recognize", methods=["POST"])
 def multi_face_recognize():
-    """Detect multiple faces, recognize them, and log attendance."""
     start_time = time.time()
 
     try:
@@ -369,9 +371,9 @@ def multi_face_recognize():
         if not faces or not class_id:
             return jsonify({"error": "Missing faces or class_id"}), 400
 
-        # -----------------------------------------
-        # 1. CALL AI MODEL (HUGGINGFACE API)
-        # -----------------------------------------
+        # ------------------------------------------------------
+        # 1. LOAD REGISTERED EMBEDDINGS & CALL HF AI
+        # ------------------------------------------------------
         registered_faces = get_cached_faces(class_id)
         payload = {"faces": faces, "registered_faces": registered_faces}
 
@@ -385,205 +387,151 @@ def multi_face_recognize():
         if not recognized:
             return jsonify({"message": "No faces recognized"}), 200
 
-        # -----------------------------------------
+        # ------------------------------------------------------
         # 2. FETCH CLASS INFO
-        # -----------------------------------------
+        # ------------------------------------------------------
         cls = classes_collection.find_one({"_id": ObjectId(class_id)})
         if not cls:
             return jsonify({"error": "Class not found"}), 404
 
-        date_val = datetime.now(PH_TZ)
+        now = datetime.now(PH_TZ)
+        today_str = now.strftime("%Y-%m-%d")
+        now_time = now.strftime("%H:%M:%S")
+        now_nice = now.strftime("%I:%M %p")
 
-        # -----------------------------------------
-        # 3. CLASS METADATA
-        # -----------------------------------------
-        class_data = {
-            "class_id": str(cls["_id"]),
-            "subject_code": cls.get("subject_code", ""),
-            "subject_title": cls.get("subject_title", ""),
-            "course": cls.get("course", ""),
-            "section": cls.get("section", ""),
-            "year_level": cls.get("year_level", ""),
-            "semester": cls.get("semester", ""),
-            "school_year": cls.get("school_year", ""),
-            "instructor_id": cls.get("instructor_id", ""),
-            "instructor_first_name": cls.get("instructor_first_name", "Unknown"),
-            "instructor_last_name": cls.get("instructor_last_name", "Unknown"),
-            "date": date_val.strftime("%Y-%m-%d"),
-        }
-
-        # -------------------------------------------------
-        # 4. ENSURE DAY SESSION EXISTS (CREATE start_time)
-        # -------------------------------------------------
+        # ------------------------------------------------------
+        # 3. ENSURE TODAY'S ATTENDANCE DOCUMENT EXISTS
+        # ------------------------------------------------------
         attendance_collection.update_one(
-            {
-                "class_id": class_id,
-                "date": {
-                    "$gte": date_val.replace(hour=0, minute=0, second=0, microsecond=0),
-                    "$lt": date_val.replace(hour=23, minute=59, second=59, microsecond=999999),
-                },
-            },
+            {"class_id": class_id, "date": today_str},
             {
                 "$setOnInsert": {
                     "class_id": class_id,
-                    "subject_code": class_data["subject_code"],
-                    "subject_title": class_data["subject_title"],
-                    "course": class_data["course"],
-                    "section": class_data["section"],
-                    "school_year": class_data["school_year"],
-                    "semester": class_data["semester"],
-                    "date": class_data["date"],
+                    "subject_code": cls.get("subject_code"),
+                    "subject_title": cls.get("subject_title"),
+                    "course": cls.get("course"),
+                    "section": cls.get("section"),
+                    "year_level": cls.get("year_level"),
+                    "school_year": cls.get("school_year"),
+                    "semester": cls.get("semester"),
+                    "instructor_id": cls.get("instructor_id"),
+                    "instructor_first_name": cls.get("instructor_first_name", "Unknown"),
+                    "instructor_last_name": cls.get("instructor_last_name", "Unknown"),
+                    "date": today_str,
                     "students": [],
-                    "start_time": datetime.now(PH_TZ).strftime("%H:%M:%S"),
-                    "end_time": None
+                    "start_time": now_time,
+                    "end_time": None,
                 }
             },
-            upsert=True
+            upsert=True,
         )
 
         results = []
 
-        # -----------------------------------------
-        # 5. LOOP THROUGH RECOGNIZED FACES
-        # -----------------------------------------
+        # ------------------------------------------------------
+        # 4. PROCESS RECOGNIZED FACES
+        # ------------------------------------------------------
         for face in recognized:
+
             sid = face.get("student_id")
             if not sid:
                 continue
 
-            # Fetch info about the student
-            raw_student = get_student_by_id(sid)
-            if not raw_student:
+            student = get_student_by_id(sid)
+            if not student:
                 continue
 
             student_data = {
-                "student_id": raw_student.get("student_id"),
-                "first_name": raw_student.get("first_name") or raw_student.get("First_Name", ""),
-                "last_name": raw_student.get("last_name") or raw_student.get("Last_Name", ""),
+                "student_id": student.get("student_id"),
+                "first_name": student.get("first_name") or student.get("First_Name", ""),
+                "last_name": student.get("last_name") or student.get("Last_Name", ""),
             }
 
-            # -------------------------------------------------
-            # 6. CHECK IF ALREADY LOGGED TODAY
-            # -------------------------------------------------
-            existing_log = attendance_collection.find_one(
-                {
-                    "class_id": class_id,
-                    "students.student_id": sid,
-                    "date": {
-                        "$gte": date_val.replace(hour=0, minute=0, second=0, microsecond=0),
-                        "$lt": date_val.replace(hour=23, minute=59, second=59, microsecond=999999),
-                    },
-                },
+            # ------------------------------------------------------
+            # 5. CHECK IF ALREADY LOGGED
+            # ------------------------------------------------------
+            existing = attendance_collection.find_one(
+                {"class_id": class_id, "date": today_str, "students.student_id": sid},
                 {"students.$": 1}
             )
 
-            if existing_log and "students" in existing_log and existing_log["students"]:
-                # Already logged — no reprocessing
-                existing_status = existing_log["students"][0].get("status", "Present")
+            if existing and existing.get("students"):
+                # Already logged → return same status
+                existing_status = existing["students"][0]["status"]
 
                 results.append({
-                    "student_id": sid,
-                    "first_name": student_data["first_name"],
-                    "last_name": student_data["last_name"],
+                    **student_data,
                     "status": existing_status,
-                    "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
-                    "subject_code": class_data["subject_code"],
-                    "subject_title": class_data["subject_title"],
-                    "course": class_data["course"],
-                    "section": class_data["section"],
-                    "instructor_first_name": class_data["instructor_first_name"],
-                    "instructor_last_name": class_data["instructor_last_name"],
+                    "time": now_nice,
+                    "subject_code": cls.get("subject_code"),
+                    "subject_title": cls.get("subject_title"),
+                    "course": cls.get("course"),
+                    "section": cls.get("section"),
+                    "instructor_first_name": cls.get("instructor_first_name"),
+                    "instructor_last_name": cls.get("instructor_last_name"),
+                    "bbox": face.get("bbox"),
                 })
                 continue
 
-            # -------------------------------------------------
-            # 7. DETERMINE LATE / PRESENT
-            # -------------------------------------------------
-            attendance_start_time = cls.get("attendance_start_time")
-
-            if attendance_start_time:
+            # ------------------------------------------------------
+            # 6. CALCULATE PRESENT / LATE
+            # ------------------------------------------------------
+            class_start = cls.get("attendance_start_time")
+            if class_start:
                 try:
-                    class_start_dt = datetime.fromisoformat(
-                        str(attendance_start_time).replace("Z", "+00:00")
-                    )
-                    diff_minutes = (date_val - class_start_dt).total_seconds() / 60.0
-                    status = "Late" if diff_minutes > 15 else "Present"
-                except Exception:
+                    class_start_dt = datetime.fromisoformat(str(class_start).replace("Z", "+00:00"))
+                    diff_min = (now - class_start_dt).total_seconds() / 60
+                    status = "Late" if diff_min > 15 else "Present"
+                except:
                     status = "Present"
             else:
                 status = "Present"
 
-            # -------------------------------------------------
-            # 8. ALWAYS UPDATE end_time ON NEW LOG
-            # -------------------------------------------------
+            # ------------------------------------------------------
+            # 7. UPDATE end_time EVERY NEW RECOGNITION
+            # ------------------------------------------------------
             attendance_collection.update_one(
+                {"class_id": class_id, "date": today_str},
+                {"$set": {"end_time": now_time}}
+            )
+
+            # ------------------------------------------------------
+            # 8. LOG THE STUDENT
+            # ------------------------------------------------------
+            attendance_collection.update_one(
+                {"class_id": class_id, "date": today_str},
                 {
-                    "class_id": class_id,
-                    "date": {
-                        "$gte": date_val.replace(hour=0, minute=0, second=0, microsecond=0),
-                        "$lt": date_val.replace(hour=23, minute=59, second=59, microsecond=999999),
-                    },
-                },
-                {
-                    "$set": {
-                        "end_time": datetime.now(PH_TZ).strftime("%H:%M:%S")
+                    "$push": {
+                        "students": {
+                            "student_id": student_data["student_id"],
+                            "first_name": student_data["first_name"],
+                            "last_name": student_data["last_name"],
+                            "status": status,
+                            "time_logged": now_time,   # 👈 FIXED (Always logs time!)
+                        }
                     }
                 }
             )
 
-            # -------------------------------------------------
-            # 9. LOG ATTENDANCE
-            # -------------------------------------------------
-            log_attendance_model(
-                class_data=class_data,
-                student_data=student_data,
-                status=status,
-                date_val=date_val,
-                class_start_time=cls.get("attendance_start_time"),
-            )
-
-            # -------------------------------------------------
-            # 10. GET UPDATED STATUS (ensures correct DB value)
-            # -------------------------------------------------
-            updated_log = attendance_collection.find_one(
-                {
-                    "class_id": class_id,
-                    "students.student_id": sid,
-                    "date": {
-                        "$gte": date_val.replace(hour=0, minute=0, second=0, microsecond=0),
-                        "$lt": date_val.replace(hour=23, minute=59, second=59, microsecond=999999),
-                    },
-                },
-                {"students.$": 1}
-            )
-
-            final_status = (
-                updated_log["students"][0].get("status", status)
-                if updated_log and "students" in updated_log and updated_log["students"]
-                else status
-            )
-
-            # -------------------------------------------------
-            # 11. BUILD RESULT ITEM FOR RESPONSE
-            # -------------------------------------------------
+            # ------------------------------------------------------
+            # 9. ADD TO RESULTS
+            # ------------------------------------------------------
             results.append({
-                "student_id": sid,
-                "first_name": student_data["first_name"],
-                "last_name": student_data["last_name"],
-                "status": final_status,
-                "time": datetime.now(PH_TZ).strftime("%I:%M %p"),
-                "subject_code": class_data["subject_code"],
-                "subject_title": class_data["subject_title"],
-                "course": class_data["course"],
-                "section": class_data["section"],
-                "instructor_first_name": class_data["instructor_first_name"],
-                "instructor_last_name": class_data["instructor_last_name"],
+                **student_data,
+                "status": status,
+                "time": now_nice,
+                "subject_code": cls.get("subject_code"),
+                "subject_title": cls.get("subject_title"),
+                "course": cls.get("course"),
+                "section": cls.get("section"),
+                "instructor_first_name": cls.get("instructor_first_name"),
+                "instructor_last_name": cls.get("instructor_last_name"),
                 "bbox": face.get("bbox"),
             })
 
-        # -------------------------------------------------
-        # 12. FINISH
-        # -------------------------------------------------
+        # ------------------------------------------------------
+        # 10. RETURN FINAL RESPONSE
+        # ------------------------------------------------------
         duration = time.time() - start_time
         current_app.logger.info(f"✅ Multi-face logged {len(results)} students in {duration:.2f}s")
 
@@ -591,12 +539,12 @@ def multi_face_recognize():
             "success": True,
             "logged": results,
             "count": len(results),
-            "subject_code": class_data["subject_code"],
-            "subject_title": class_data["subject_title"],
-            "course": class_data["course"],
-            "section": class_data["section"],
-            "instructor_first_name": class_data["instructor_first_name"],
-            "instructor_last_name": class_data["instructor_last_name"],
+            "subject_code": cls.get("subject_code"),
+            "subject_title": cls.get("subject_title"),
+            "course": cls.get("course"),
+            "section": cls.get("section"),
+            "instructor_first_name": cls.get("instructor_first_name"),
+            "instructor_last_name": cls.get("instructor_last_name"),
         }), 200
 
     except Exception as e:
