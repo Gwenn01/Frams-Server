@@ -491,4 +491,38 @@ def mark_excused():
         print("❌ Error in /mark-excused:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
 
+# ✅ Get attendance sessions for a specific class
+@attendance_bp.route("/sessions/<class_id>", methods=["GET"])
+def get_sessions_by_class(class_id):
+    try:
+        # Find by STRING class_id (based on your DB)
+        logs = list(attendance_logs_col.find({"class_id": str(class_id)}))
+
+        sessions = []
+
+        for log in logs:
+            sessions.append({
+                "_id": str(log["_id"]),
+                "class_id": log.get("class_id"),
+                "date": log.get("date"),
+                "start_time": log.get("start_time"),
+                "end_time": log.get("end_time"),
+                "students": log.get("students", []),
+                "subject_code": log.get("subject_code"),
+                "subject_title": log.get("subject_title"),
+                "course": log.get("course"),
+                "section": log.get("section"),
+                "semester": log.get("semester"),
+                "school_year": log.get("school_year"),
+            })
+
+        return jsonify({
+            "success": True,
+            "sessions": sessions
+        }), 200
+
+    except Exception:
+        import traceback
+        print("❌ Error in /sessions/<class_id>:", traceback.format_exc())
+        return jsonify({"error": "Internal server error"}), 500
 
