@@ -372,7 +372,29 @@ def multi_face_recognize():
         # -----------------------------------------
         # 1. CALL AI MODEL (HUGGINGFACE API)
         # -----------------------------------------
-        registered_faces = get_cached_faces(class_id)
+        student_ids = []
+
+        # CASE A: class.students = [{student_id, ...}]
+        if "students" in cls:
+            for s in cls["students"]:
+                sid = s.get("student_id")
+                if sid:
+                    student_ids.append(sid)
+
+        # CASE B: class.enrolled_students = ["22-1-1-xxxx", ...]
+        elif "enrolled_students" in cls:
+            student_ids.extend(cls["enrolled_students"])
+
+        if not student_ids:
+            return jsonify({"error": "No enrolled students for this class"}), 400
+
+        # 2) Load only embeddings from MongoDB
+        registered_faces = list(db["face_db"].find(
+            {"student_id": {"$in": student_ids}},
+            {"_id": 0}
+        ))
+
+        current_app.logger.info(f"🧠 Loaded {len(registered_faces)} embeddings for this class only")
         payload = {"faces": faces, "registered_faces": registered_faces}
 
         res = requests.post(f"{HF_AI_URL}/recognize-multi", json=payload, timeout=90)
