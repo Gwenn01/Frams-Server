@@ -107,6 +107,7 @@ def get_classes_by_instructor(instructor_id):
                 "course": cls.get("course"),
                 "section": cls.get("section"),
                 "year_level": cls.get("year_level"),
+                "school_year": cls.get("school_year"),
                 "semester": cls.get("semester"),
                 "schedule_blocks": cls.get("schedule_blocks", []),
                 "is_attendance_active": cls.get("is_attendance_active", False),
