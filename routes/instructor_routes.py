@@ -459,6 +459,21 @@ def get_instructor_by_id(instructor_id):
     # Convert ObjectId → string
     inst["_id"] = str(inst["_id"])
 
+    # Ensure fields exist so frontend never breaks
+    inst.setdefault("registered", False)
+    inst.setdefault("embeddings", {})
+
+    # If embeddings exist but angles missing, treat as not registered
+    required_angles = ["front", "left", "right", "up", "down"]
+    has_all = all(
+        angle in inst["embeddings"] 
+        and isinstance(inst["embeddings"][angle], list)
+        and len(inst["embeddings"][angle]) == 512
+        for angle in required_angles
+    )
+
+    inst["fully_registered"] = has_all
+
     return jsonify(inst), 200
 
 
