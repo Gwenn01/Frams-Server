@@ -12,6 +12,7 @@ from config.db_config import db
 # 🔹 Work with classes instead of subjects
 classes_collection = db["classes"]
 attendance_collection = db["attendance_logs"]
+instructor_collection = db["instructors"]
 
 # 🔄 Attendance model helpers (class-based)
 from models.attendance_model import (
@@ -77,17 +78,48 @@ def start_session():
         class_id = data.get("class_id")
         instructor_id = data.get("instructor_id")
 
-        if not class_id:
-            return jsonify({"error": "Missing class_id"}), 400
+        if not class_id or not instructor_id:
+            return jsonify({"error": "Missing class_id or instructor_id"}), 400
 
+        # ----------------------------------------------
+        # ✅ 1. Fetch instructor
+        # ----------------------------------------------
+        instructor = instructor_collection.find_one({"instructor_id": instructor_id})
+        if not instructor:
+            return jsonify({"error": "Instructor not found"}), 404
+
+        # ----------------------------------------------
+        # ✅ 2. Validate if face registration is complete
+        # ----------------------------------------------
+        if not instructor.get("registered"):
+            return jsonify({"error": "Instructor has not registered their face"}), 400
+
+        embeddings = instructor.get("embeddings", {})
+
+        required_angles = ["front", "left", "right", "up", "down"]
+        has_all = all(
+            angle in embeddings
+            and isinstance(embeddings[angle], list)
+            and len(embeddings[angle]) == 512
+            for angle in required_angles
+        )
+
+        if not has_all:
+            return jsonify({"error": "Incomplete face registration. All 5 angles are required."}), 400
+
+        # ----------------------------------------------
+        # ✅ 3. Start the attendance session
+        # ----------------------------------------------
         ok = start_attendance_session(class_id, instructor_id)
         if not ok:
             return jsonify({"error": f"Failed to start session for class {class_id}"}), 400
 
+        # Retrieve class for frontend update
         cls = classes_collection.find_one({"_id": ObjectId(class_id)})
+
         return jsonify({
             "success": True,
-            "message": f"✅ Attendance session started for class {class_id}",
+            "message": f"Attendance session started for class {class_id}",
             "class": _class_to_payload(cls),
         }), 200
 
