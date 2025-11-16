@@ -61,27 +61,42 @@ def refresh_face_cache(excluded_ids=None):
 
 def get_cached_faces(class_id):
     """
-    Returns only the registered faces that belong to the class.
+    Returns only embeddings for students enrolled in the class.
+    Output must match HF expected format:
+    { user_id, embedding, angle }
     """
     cls = classes_collection.find_one({"_id": ObjectId(class_id)})
-
     if not cls:
+        print("❌ Class not found for embeddings.")
         return []
 
-    # Get student IDs from this class
+    # Students enrolled in the class
     student_ids = [s["student_id"] for s in cls.get("students", [])]
-
     if not student_ids:
-        print("⚠️ No students enrolled in this class.")
+        print("⚠️ Class has no enrolled students.")
         return []
 
-    # Load only the embeddings of students in this class
-    faces = list(students_collection.find(
-        {"student_id": {"$in": student_ids}}
+    # Fetch ONLY students who actually registered faces
+    students = list(students_collection.find(
+        {"student_id": {"$in": student_ids}, "embeddings": {"$exists": True}}
     ))
 
-    print(f"🧠 Loaded {len(faces)} class-specific embeddings")
-    return faces
+    registered = []
+    for s in students:
+        sid = s.get("student_id")
+        embeddings = s.get("embeddings", {})
+
+        for angle, vec in embeddings.items():
+            if isinstance(vec, list) and len(vec) == 512:
+                registered.append({
+                    "user_id": sid,
+                    "embedding": vec,
+                    "angle": angle
+                })
+
+    print(f"🧠 Loaded {len(registered)} embeddings for class {class_id}")
+    return registered
+
 
 
 def cache_registered_faces():
@@ -370,9 +385,6 @@ def register_instructor():
 # ============================================================
 # 🌐 MULTI-FACE ATTENDANCE
 # ============================================================
-# ============================================================
-# 🌐 MULTI-FACE ATTENDANCE — FINAL FIXED VERSION
-# ============================================================
 @face_bp.route("/multi-recognize", methods=["POST"])
 def multi_face_recognize():
     start_time = time.time()
@@ -390,6 +402,13 @@ def multi_face_recognize():
         # ------------------------------------------------------
         registered_faces = get_cached_faces(class_id)
         payload = {"faces": faces, "registered_faces": registered_faces}
+
+        if not registered_faces:
+            return jsonify({
+                "success": False,
+                "message": "No registered faces for this class",
+                "recognized": []
+            }), 200
 
         res = requests.post(f"{HF_AI_URL}/recognize-multi", json=payload, timeout=90)
         if res.status_code != 200:
