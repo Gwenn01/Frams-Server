@@ -358,9 +358,8 @@ def register_instructor():
 # ============================================================
 @face_bp.route("/multi-recognize", methods=["POST"])
 def multi_face_recognize():
-    """Detect multiple faces, log new ones, and return updated attendance list."""
+    """Detect multiple faces, recognize new ones, and return full session logs."""
     start_time = time.time()
-
     try:
         data = request.get_json(silent=True) or {}
         faces = data.get("faces", [])
@@ -369,28 +368,33 @@ def multi_face_recognize():
         if not faces or not class_id:
             return jsonify({"error": "Missing faces or class_id"}), 400
 
-        # Load class
+        # ------------------------------------------------------------
+        # 1) Load Class
+        # ------------------------------------------------------------
         cls = classes_collection.find_one({"_id": ObjectId(class_id)})
         if not cls:
             return jsonify({"error": "Class not found"}), 404
 
-        # Use today's date
-        today_str = datetime.now(PH_TZ).strftime("%Y-%m-%d")
+        date_val = datetime.now(PH_TZ)
 
-        # MUST exist (created at /start-session)
-        today_log = attendance_collection.find_one(
-            {"class_id": class_id, "date": today_str}
-        )
+        # Build class metadata
+        class_data = {
+            "class_id": str(cls["_id"]),
+            "subject_code": cls.get("subject_code", ""),
+            "subject_title": cls.get("subject_title", ""),
+            "course": cls.get("course", ""),
+            "section": cls.get("section", ""),
+            "year_level": cls.get("year_level", ""),
+            "semester": cls.get("semester", ""),
+            "school_year": cls.get("school_year", ""),
+            "instructor_id": cls.get("instructor_id", ""),
+            "instructor_first_name": cls.get("instructor_first_name", "Unknown"),
+            "instructor_last_name": cls.get("instructor_last_name", "Unknown"),
+        }
 
-        if not today_log:
-            return jsonify({
-                "error": "Attendance session not started",
-                "details": "Call /start-session first"
-            }), 400
-
-        # ----------------------------------------------------
-        # Call HuggingFace AI for recognition
-        # ----------------------------------------------------
+        # ------------------------------------------------------------
+        # 2) Call HuggingFace FACE-RECOGNITION API
+        # ------------------------------------------------------------
         registered_faces = get_cached_faces(class_id)
         payload = {"faces": faces, "registered_faces": registered_faces}
 
@@ -400,94 +404,127 @@ def multi_face_recognize():
 
         recognized = res.json().get("recognized", [])
 
-        # ----------------------------------------------------
-        # Process detection
-        # ----------------------------------------------------
-        detected_ids = {f.get("student_id") for f in recognized if f.get("student_id")}
-        existing_students = {s["student_id"] for s in today_log.get("students", [])}
+        # Collect IDs detected IN THIS FRAME
+        currently_detected_ids = {f.get("student_id") for f in recognized if f.get("student_id")}
 
-        new_entries = []
-        now_dt = datetime.now(PH_TZ)
+        # ------------------------------------------------------------
+        # 3) Load today's full attendance logs (for returning)
+        # ------------------------------------------------------------
+        today_start = date_val.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = date_val.replace(hour=23, minute=59, second=59, microsecond=999999)
 
+        today_log = attendance_collection.find_one(
+            {"class_id": class_id, "date": {"$gte": today_start, "$lt": today_end}}
+        )
+
+        # First-time log today (no document yet)
+        if not today_log:
+            today_log = {
+                "class_id": class_id,
+                "date": date_val,
+                "students": []
+            }
+            attendance_collection.insert_one(today_log)
+
+        existing_students = {s["student_id"] for s in today_log["students"]}
+
+        # ------------------------------------------------------------
+        # 4) Log NEWLY DETECTED students only once
+        # ------------------------------------------------------------
         for face in recognized:
             sid = face.get("student_id")
-
-            if not sid or sid in existing_students:
+            if not sid:
                 continue
 
+            # Already logged → do not duplicate
+            if sid in existing_students:
+                continue
+
+            # Fetch student info
             student = get_student_by_id(sid)
             if not student:
                 continue
 
-            # Determine Present / Late
+            # Compute Late/Present (first detection only)
             attendance_start = cls.get("attendance_start_time")
             if attendance_start:
                 try:
-                    start_dt = datetime.fromisoformat(str(attendance_start).replace("Z", "+00:00"))
-                    diff_minutes = (now_dt - start_dt).total_seconds() / 60
+                    class_start_dt = datetime.fromisoformat(str(attendance_start).replace("Z", "+00:00"))
+                    diff_minutes = (date_val - class_start_dt).total_seconds() / 60
                     status = "Late" if diff_minutes > 15 else "Present"
                 except:
                     status = "Present"
             else:
                 status = "Present"
 
-            # Add full log including time_logged
-            new_entries.append({
-                "student_id": sid,
-                "first_name": student.get("first_name") or student.get("First_Name", ""),
-                "last_name": student.get("last_name") or student.get("Last_Name", ""),
-                "status": status,
-                "time": now_dt.strftime("%I:%M %p"),
-                "time_logged": now_dt.isoformat()      # <-- FIXED
-            })
-
-            existing_students.add(sid)
-
-        # Insert new entries
-        if new_entries:
+            # Insert to DB (push to students[])
             attendance_collection.update_one(
-                {"class_id": class_id, "date": today_str},
-                {"$push": {"students": {"$each": new_entries}}}
+                {"class_id": class_id, "date": {"$gte": today_start, "$lt": today_end}},
+                {
+                    "$push": {
+                        "students": {
+                            "student_id": sid,
+                            "first_name": student.get("first_name") or student.get("First_Name", ""),
+                            "last_name": student.get("last_name") or student.get("Last_Name", ""),
+                            "status": status,
+                            "time": date_val.strftime("%I:%M %p")
+                        }
+                    }
+                }
             )
 
-        # ----------------------------------------------------
-        # Return updated attendance list
-        # ----------------------------------------------------
+            existing_students.add(sid)  # Add to in-memory list
+
+        # ------------------------------------------------------------
+        # 5) Load updated attendance logs again (merged)
+        # ------------------------------------------------------------
         updated_log = attendance_collection.find_one(
-            {"class_id": class_id, "date": today_str},
+            {"class_id": class_id, "date": {"$gte": today_start, "$lt": today_end}},
             {"students": 1}
         )
 
         final_results = []
 
-        for s in updated_log.get("students", []):
-            entry = {
+        # ------------------------------------------------------------
+        # 6) Build FINAL OUTPUT (always return ALL students)
+        # ------------------------------------------------------------
+        for s in updated_log["students"]:
+            student_entry = {
                 "student_id": s["student_id"],
                 "first_name": s["first_name"],
                 "last_name": s["last_name"],
                 "status": s["status"],
                 "time": s["time"],
-                "time_logged": s.get("time_logged"),  # <-- INCLUDED
-                "bbox": None
+                "subject_code": class_data["subject_code"],
+                "subject_title": class_data["subject_title"],
+                "course": class_data["course"],
+                "section": class_data["section"],
+                "instructor_first_name": class_data["instructor_first_name"],
+                "instructor_last_name": class_data["instructor_last_name"],
+                "bbox": None,  # Default
             }
 
-            # Add bbox only if detected in this frame
+            # Add bbox if student is currently visible
             for face in recognized:
                 if face.get("student_id") == s["student_id"]:
-                    entry["bbox"] = face.get("bbox")
+                    student_entry["bbox"] = face.get("bbox")
                     break
 
-            final_results.append(entry)
+            final_results.append(student_entry)
 
         duration = time.time() - start_time
-        current_app.logger.info(
-            f"🔥 Multi-face processed {len(final_results)} logs in {duration:.2f}s"
-        )
+        current_app.logger.info(f"🔥 Multi-face processed {len(final_results)} total logs in {duration:.2f}s")
 
         return jsonify({
             "success": True,
             "logged": final_results,
             "count": len(final_results),
+            "subject_code": class_data["subject_code"],
+            "subject_title": class_data["subject_title"],
+            "course": class_data["course"],
+            "section": class_data["section"],
+            "instructor_first_name": class_data["instructor_first_name"],
+            "instructor_last_name": class_data["instructor_last_name"],
         }), 200
 
     except Exception as e:
