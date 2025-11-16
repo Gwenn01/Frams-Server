@@ -377,8 +377,7 @@ def multi_face_recognize():
         # Use today's date
         today_str = datetime.now(PH_TZ).strftime("%Y-%m-%d")
 
-        # ------------- FIX #1 (CRITICAL) -------------
-        # NEVER create attendance log here
+        # MUST exist (created at /start-session)
         today_log = attendance_collection.find_one(
             {"class_id": class_id, "date": today_str}
         )
@@ -388,9 +387,10 @@ def multi_face_recognize():
                 "error": "Attendance session not started",
                 "details": "Call /start-session first"
             }), 400
-        # ---------------------------------------------
 
-        # Call HuggingFace recognize API
+        # ----------------------------------------------------
+        # Call HuggingFace AI for recognition
+        # ----------------------------------------------------
         registered_faces = get_cached_faces(class_id)
         payload = {"faces": faces, "registered_faces": registered_faces}
 
@@ -400,15 +400,18 @@ def multi_face_recognize():
 
         recognized = res.json().get("recognized", [])
 
-        # Process student detections
+        # ----------------------------------------------------
+        # Process detection
+        # ----------------------------------------------------
         detected_ids = {f.get("student_id") for f in recognized if f.get("student_id")}
-
         existing_students = {s["student_id"] for s in today_log.get("students", [])}
+
         new_entries = []
         now_dt = datetime.now(PH_TZ)
 
         for face in recognized:
             sid = face.get("student_id")
+
             if not sid or sid in existing_students:
                 continue
 
@@ -416,7 +419,7 @@ def multi_face_recognize():
             if not student:
                 continue
 
-            # Determine Present/Late
+            # Determine Present / Late
             attendance_start = cls.get("attendance_start_time")
             if attendance_start:
                 try:
@@ -428,25 +431,28 @@ def multi_face_recognize():
             else:
                 status = "Present"
 
+            # Add full log including time_logged
             new_entries.append({
                 "student_id": sid,
                 "first_name": student.get("first_name") or student.get("First_Name", ""),
                 "last_name": student.get("last_name") or student.get("Last_Name", ""),
                 "status": status,
-                "time": now_dt.strftime("%H:%M:%S"),
-                "time_logged": now_dt.isoformat()
+                "time": now_dt.strftime("%I:%M %p"),
+                "time_logged": now_dt.isoformat()      # <-- FIXED
             })
 
             existing_students.add(sid)
 
-        # Insert new entries only
+        # Insert new entries
         if new_entries:
             attendance_collection.update_one(
                 {"class_id": class_id, "date": today_str},
                 {"$push": {"students": {"$each": new_entries}}}
             )
 
-        # Reload updated log
+        # ----------------------------------------------------
+        # Return updated attendance list
+        # ----------------------------------------------------
         updated_log = attendance_collection.find_one(
             {"class_id": class_id, "date": today_str},
             {"students": 1}
@@ -460,12 +466,12 @@ def multi_face_recognize():
                 "first_name": s["first_name"],
                 "last_name": s["last_name"],
                 "status": s["status"],
-                "time": s.get("time"),
-                "time_logged": s.get("time_logged"),
+                "time": s["time"],
+                "time_logged": s.get("time_logged"),  # <-- INCLUDED
                 "bbox": None
             }
 
-            # Attach bbox if visible in this frame
+            # Add bbox only if detected in this frame
             for face in recognized:
                 if face.get("student_id") == s["student_id"]:
                     entry["bbox"] = face.get("bbox")
