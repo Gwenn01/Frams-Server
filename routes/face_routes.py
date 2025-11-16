@@ -59,16 +59,30 @@ def refresh_face_cache(excluded_ids=None):
     current_app.logger.info(f"✅ Cache refreshed with {len(registered_faces)} embeddings.")
     return registered_faces
 
+def get_cached_faces(class_id):
+    """
+    Returns only the registered faces that belong to the class.
+    """
+    cls = classes_collection.find_one({"_id": ObjectId(class_id)})
 
-def get_cached_faces(excluded_ids=None):
-    """Return cached embeddings or refresh if expired."""
-    registered_faces = current_app.config.get("CACHED_FACES")
-    last_update = current_app.config.get("CACHED_FACES_LAST_UPDATE", 0)
-    cache_age = time.time() - last_update
+    if not cls:
+        return []
 
-    if not registered_faces or cache_age > CACHE_TTL:
-        return refresh_face_cache(excluded_ids)
-    return registered_faces
+    # Get student IDs from this class
+    student_ids = [s["student_id"] for s in cls.get("students", [])]
+
+    if not student_ids:
+        print("⚠️ No students enrolled in this class.")
+        return []
+
+    # Load only the embeddings of students in this class
+    faces = list(students_collection.find(
+        {"student_id": {"$in": student_ids}}
+    ))
+
+    print(f"🧠 Loaded {len(faces)} class-specific embeddings")
+    return faces
+
 
 def cache_registered_faces():
     """Cache all registered embeddings in memory for faster login."""
