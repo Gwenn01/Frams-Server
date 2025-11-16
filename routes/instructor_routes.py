@@ -448,5 +448,18 @@ def get_class_sessions(class_id):
     except Exception as e:
         print("❌ ERROR /class-sessions:", e)
         return jsonify({"error": "Internal server error"}), 500
+    
+@instructor_bp.route("/me/<instructor_id>", methods=["GET"])
+def get_instructor_by_id(instructor_id):
+    inst = instructors_collection.find_one({"instructor_id": instructor_id})
+
+    if not inst:
+        return jsonify({"error": "Instructor not found"}), 404
+
+    # Convert ObjectId → string
+    inst["_id"] = str(inst["_id"])
+
+    return jsonify(inst), 200
+
 
 
