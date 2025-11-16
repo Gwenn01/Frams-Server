@@ -433,7 +433,7 @@ def multi_face_recognize():
                 "first_name": student.get("first_name") or student.get("First_Name", ""),
                 "last_name": student.get("last_name") or student.get("Last_Name", ""),
                 "status": status,
-                "time": now_dt.strftime("%I:%M %p")
+                "time_logged": now_dt.strftime("%I:%M %p") 
             })
 
             existing_students.add(sid)
@@ -459,7 +459,7 @@ def multi_face_recognize():
                 "first_name": s["first_name"],
                 "last_name": s["last_name"],
                 "status": s["status"],
-                "time": s["time"],
+                "time_logged": s.get("time_logged") or s.get("time"), 
                 "bbox": None
             }
 
