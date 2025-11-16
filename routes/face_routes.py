@@ -507,7 +507,7 @@ def multi_face_recognize():
                             "first_name": student_data["first_name"],
                             "last_name": student_data["last_name"],
                             "status": status,
-                            "time_logged": now_time,   # 👈 FIXED (Always logs time!)
+                            "time": now_time,   
                         }
                     }
                 }
