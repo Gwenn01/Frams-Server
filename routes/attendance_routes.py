@@ -81,40 +81,86 @@ def start_session():
         if not class_id or not instructor_id:
             return jsonify({"error": "Missing class_id or instructor_id"}), 400
 
-        # ----------------------------------------------
-        # ✅ 1. Fetch instructor
-        # ----------------------------------------------
+        # -------------------------------------------------
+        # 1. Fetch instructor
+        # -------------------------------------------------
         instructor = instructor_collection.find_one({"instructor_id": instructor_id})
         if not instructor:
             return jsonify({"error": "Instructor not found"}), 404
 
-        # ----------------------------------------------
-        # ✅ 2. Validate if face registration is complete
-        # ----------------------------------------------
+        # -------------------------------------------------
+        # 2. Validate if face registration is complete
+        # -------------------------------------------------
         if not instructor.get("registered"):
             return jsonify({"error": "Instructor has not registered their face"}), 400
 
         embeddings = instructor.get("embeddings", {})
-
         required_angles = ["front", "left", "right", "up", "down"]
+
         has_all = all(
-            angle in embeddings
-            and isinstance(embeddings[angle], list)
-            and len(embeddings[angle]) == 512
+            angle in embeddings and isinstance(embeddings[angle], list) and len(embeddings[angle]) == 512
             for angle in required_angles
         )
 
         if not has_all:
             return jsonify({"error": "Incomplete face registration. All 5 angles are required."}), 400
 
-        # ----------------------------------------------
-        # ✅ 3. Start the attendance session
-        # ----------------------------------------------
+        # -------------------------------------------------
+        # 3. Fetch class details
+        # -------------------------------------------------
+        cls = classes_collection.find_one({"_id": ObjectId(class_id)})
+        if not cls:
+            return jsonify({"error": "Class not found"}), 404
+
+        schedule_blocks = cls.get("schedule_blocks", [])
+        if not schedule_blocks:
+            return jsonify({"error": "No schedule found for this class"}), 400
+
+        # -------------------------------------------------
+        # 4. Validate CURRENT TIME vs CLASS SCHEDULE
+        # -------------------------------------------------
+        now = datetime.now(PH_TZ)
+        current_day = now.strftime("%a")  # "Tue", "Thu", "Mon"
+        current_time = now.strftime("%H:%M")
+
+        is_scheduled_now = False
+        matching_block = None
+
+        for block in schedule_blocks:
+            days = block.get("days", [])
+            start_time = block.get("start")
+            end_time = block.get("end")
+
+            if not days or not start_time or not end_time:
+                continue
+
+            if current_day in days and start_time <= current_time <= end_time:
+                is_scheduled_now = True
+                matching_block = block
+                break
+
+        if not is_scheduled_now:
+            # Show exact schedule for clarity
+            readable_sched = [
+                f"{blk.get('days')} {blk.get('start')} - {blk.get('end')}"
+                for blk in schedule_blocks
+            ]
+
+            return jsonify({
+                "error": (
+                    f"⛔ Cannot start session.\nThis class is only scheduled during:\n"
+                    f"{readable_sched}"
+                )
+            }), 400
+
+        # -------------------------------------------------
+        # 5. Start the attendance session (finally)
+        # -------------------------------------------------
         ok = start_attendance_session(class_id, instructor_id)
         if not ok:
             return jsonify({"error": f"Failed to start session for class {class_id}"}), 400
 
-        # Retrieve class for frontend update
+        # Retrieve updated class
         cls = classes_collection.find_one({"_id": ObjectId(class_id)})
 
         return jsonify({
@@ -127,6 +173,7 @@ def start_session():
         import traceback
         print("❌ Error in /start-session:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
+
     
 # ✅ Stop attendance session (auto-mark absentees asynchronously)
 @attendance_bp.route("/stop-session", methods=["POST"])
