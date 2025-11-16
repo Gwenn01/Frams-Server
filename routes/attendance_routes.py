@@ -80,62 +80,18 @@ def start_session():
         if not class_id:
             return jsonify({"error": "Missing class_id"}), 400
 
-        # Load class details
-        cls = classes_collection.find_one({"_id": ObjectId(class_id)})
-        if not cls:
-            return jsonify({"error": "Class not found"}), 404
-
-        # Generate today's date string
-        today_str = datetime.now(PH_TZ).strftime("%Y-%m-%d")
-        start_time_str = datetime.now(PH_TZ).strftime("%H:%M:%S")
-
-        # Create today's attendance document (if not yet created)
-        attendance_collection.update_one(
-            {"class_id": class_id, "date": today_str},
-            {
-                "$setOnInsert": {
-                    "class_id": class_id,
-                    "date": today_str,
-                    "start_time": start_time_str,
-                    "end_time": None,
-                    "students": [],
-
-                    # Inject class metadata
-                    "course": cls.get("course", ""),
-                    "school_year": cls.get("school_year", ""),
-                    "semester": cls.get("semester", ""),
-                    "section": cls.get("section", ""),
-                    "subject_code": cls.get("subject_code", ""),
-                    "subject_title": cls.get("subject_title", ""),
-
-                    "instructor_id": cls.get("instructor_id", ""),
-                    "instructor_first_name": cls.get("instructor_first_name", "Unknown"),
-                    "instructor_last_name": cls.get("instructor_last_name", "Unknown"),
-                }
-            },
-            upsert=True
-        )
-
-        # Set class as active
-        classes_collection.update_one(
-            {"_id": ObjectId(class_id)},
-            {
-                "$set": {
-                    "is_attendance_active": True,
-                    "attendance_start_time": start_time_str
-                }
-            }
-        )
+        ok = start_attendance_session(class_id, instructor_id)
+        if not ok:
+            return jsonify({"error": f"Failed to start session for class {class_id}"}), 400
 
         cls = classes_collection.find_one({"_id": ObjectId(class_id)})
-
         return jsonify({
             "success": True,
-            "message": "Attendance session started",
+            "message": f"✅ Attendance session started for class {class_id}",
             "class": _class_to_payload(cls),
         }), 200
 
-    except Exception as e:
+    except Exception:
         import traceback
         print("❌ Error in /start-session:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
