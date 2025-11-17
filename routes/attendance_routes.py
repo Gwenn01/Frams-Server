@@ -95,15 +95,17 @@ def start_session():
             return jsonify({"error": "Instructor has not registered their face"}), 400
 
         embeddings = instructor.get("embeddings", {})
-        required_angles = ["front", "left", "right", "up", "down"]
 
-        has_all = all(
-            angle in embeddings and isinstance(embeddings[angle], list) and len(embeddings[angle]) == 512
-            for angle in required_angles
+        # Allow even incomplete registration as long as at least 1 angle exists
+        has_any = any(
+            isinstance(embeddings.get(angle), list) and len(embeddings.get(angle)) == 512
+            for angle in ["front", "left", "right", "up", "down"]
         )
 
-        if not has_all:
-            return jsonify({"error": "Incomplete face registration. All 5 angles are required."}), 400
+        if not has_any:
+            return jsonify({
+                "error": "Instructor must register at least one valid face angle to start a session."
+            }), 400
 
         # -------------------------------------------------
         # 3. Fetch class details
