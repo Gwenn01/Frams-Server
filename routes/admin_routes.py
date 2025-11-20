@@ -670,38 +670,30 @@ def get_single_semester():
         print("❌ GET /semester error:", e)
         return jsonify({"error": str(e)}), 500
 
-@admin_bp.route("/api/admin/semester", methods=["PUT"])
-def update_single_semester():
+@admin_bp.route("/api/admin/semester", methods=["GET"])
+def get_single_semester():
     try:
-        data = request.get_json() or {}
-
-        required = ["semester_name", "start_date", "end_date"]
-        if not all(data.get(f) for f in required):
-            return jsonify({"error": "Missing required fields"}), 400
-
-        # Auto compute school year from start date
-        start_year = int(str(data["start_date"])[0:4])
-        school_year = f"{start_year}-{start_year + 1}"
-
-        update_data = {
-            "semester_name": data["semester_name"],
-            "school_year": school_year,
-            "start_date": data["start_date"],
-            "end_date": data["end_date"],
-        }
-
-        db.semesters.update_one({}, {"$set": update_data})
-
+        # Check if collection has at least one document
         sem = db.semesters.find_one()
-        sem["_id"] = str(sem["_id"])
 
-        return jsonify({
-            "message": "Semester updated successfully",
-            "semester": sem
-        }), 200
+        # If none exists — create default inactive semester
+        if not sem:
+            new_sem = {
+                "semester_name": "",
+                "school_year": "",
+                "start_date": None,
+                "end_date": None,
+                "is_active": False,
+                "created_at": datetime.utcnow()
+            }
+            result = db.semesters.insert_one(new_sem)
+            sem = db.semesters.find_one({"_id": result.inserted_id})
+
+        sem["_id"] = str(sem["_id"])
+        return jsonify(sem), 200
 
     except Exception as e:
-        print("❌ PUT /semester error:", e)
+        print("❌ GET /semester error:", e)
         return jsonify({"error": str(e)}), 500
 
 @admin_bp.route("/api/admin/semester/activate", methods=["PUT"])
@@ -711,18 +703,35 @@ def activate_single_semester():
         if not sem:
             return jsonify({"error": "No semester exists"}), 404
 
-        db.semesters.update_many({}, {"$set": {"is_active": False}})
-        db.semesters.update_one({"_id": sem["_id"]}, {"$set": {"is_active": True}})
+        def normalize_semester(name):
+            name = name.lower().strip()
+            if "1st" in name:
+                return "1st Sem"
+            if "2nd" in name:
+                return "2nd Sem"
+            if "summer" in name:
+                return "Summer"
+            return name
 
-        sem_name = sem["semester_name"]
+        normalized_sem = normalize_semester(sem["semester_name"])
+
+        # Save normalized name back to DB
+        db.semesters.update_one({"_id": sem["_id"]}, {
+            "$set": {
+                "semester_name": normalized_sem,
+                "is_active": True
+            }
+        })
+
+        # Match & update subjects to use the new school year
         school_year = sem["school_year"]
 
         result = db.subjects.update_many(
-            {"semester": {"$regex": sem_name.split()[0], "$options": "i"}},
+            {"semester": {"$regex": f"^{normalized_sem}$", "$options": "i"}},
             {"$set": {"school_year": school_year}}
         )
 
-        updated_sem = db.semesters.find_one({"is_active": True})
+        updated_sem = db.semesters.find_one({"_id": sem["_id"]})
         updated_sem["_id"] = str(updated_sem["_id"])
 
         return jsonify({
