@@ -544,13 +544,15 @@ def multi_face_recognize():
 
             # 🔥 PREVIOUSLY LOGGED (SESSION MEMORY)
             if user_id in SESSION_LOGGED_STUDENTS[class_id]:
-                results.append({
-                    **student_data,
-                    "status": "Present",
-                    "time": now_nice,
-                    "bbox": face.get("bbox"),
-                })
-                continue
+                # If student is already logged as present, keep it present
+                if SESSION_LOGGED_STUDENTS[class_id][user_id]["status"] == "Present":
+                    results.append({
+                        **student_data,
+                        "status": "Present",  # Keep the status as "Present"
+                        "time": now_nice,
+                        "bbox": face.get("bbox"),
+                    })
+                continue 
 
             # 🔥 DB: CHECK IF ALREADY LOGGED
             existing = attendance_collection.find_one(
@@ -561,7 +563,7 @@ def multi_face_recognize():
             if existing and existing.get("students"):
                 existing_status = existing["students"][0]["status"]
 
-                SESSION_LOGGED_STUDENTS[class_id].add(user_id)
+                SESSION_LOGGED_STUDENTS[class_id][user_id] = {"status": existing_status}
 
                 results.append({
                     **student_data,
@@ -604,7 +606,7 @@ def multi_face_recognize():
             )
 
             # Add to session memory
-            SESSION_LOGGED_STUDENTS[class_id].add(user_id)
+            SESSION_LOGGED_STUDENTS[class_id][user_id] = {"status": status}
 
             results.append({
                 **student_data,
