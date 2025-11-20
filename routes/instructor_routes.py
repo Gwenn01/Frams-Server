@@ -477,5 +477,32 @@ def get_instructor_by_id(instructor_id):
 
     return jsonify(inst), 200
 
+@instructor_bp.route("/<string:instructor_id>/all-sessions", methods=["GET"])
+@jwt_required()
+def get_all_instructor_sessions(instructor_id):
+    try:
+        # ensure correct instructor identity
+        current_id = get_jwt_identity()
+        if current_id != instructor_id:
+            return jsonify({"error": "Unauthorized"}), 403
+
+        # fetch ALL attendance logs created by this instructor
+        sessions = list(attendance_collection.find(
+            {"instructor_id": instructor_id}
+        ).sort("date", -1))
+
+        # convert ObjectId → string
+        for s in sessions:
+            s["_id"] = str(s["_id"])
+
+        return jsonify({
+            "success": True,
+            "sessions": sessions
+        }), 200
+
+    except Exception as e:
+        print("❌ ERROR /all-sessions:", e)
+        return jsonify({"error": "Internal server error"}), 500
+
 
 
