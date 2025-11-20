@@ -644,6 +644,22 @@ def delete_subject(id):
         return jsonify({"error": "Subject not found"}), 404
     return jsonify({"message": "Subject deleted successfully"}), 200
 
+@admin_bp.route("/api/admin/semester/current", methods=["GET"])
+@jwt_required()
+def get_current_semester():
+    try:
+        sem = db.semesters.find_one()
+        if not sem:
+            return jsonify({"error": "No semester found"}), 404
+
+        sem["_id"] = str(sem["_id"])
+        return jsonify(sem), 200
+
+    except Exception as e:
+        print("❌ GET /semester/current error:", e)
+        return jsonify({"error": str(e)}), 500
+
+
 @admin_bp.route("/api/admin/semester", methods=["PUT"])
 def update_single_semester():
     try:
