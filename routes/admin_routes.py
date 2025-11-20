@@ -739,36 +739,44 @@ def activate_single_semester():
 @jwt_required()
 def get_active_subjects():
     try:
-        # 🧩 Get program from JWT claims
         claims = get_jwt()
         admin_program = claims.get("program")
-
         if not admin_program:
             return jsonify({"error": "Admin program not found in token"}), 400
 
-        # 🧠 Fetch the active semester
+        # Fetch active semester
         active_sem = db.semesters.find_one({"is_active": True})
         if not active_sem:
             return jsonify({"message": "No active semester found"}), 404
 
-        semester_name = active_sem["semester_name"]  # "2nd Semester"
+        # Normalize semester name to match subject documents
+        def normalize_semester(name):
+            name = name.lower()
+            if "1st" in name:
+                return "1st Sem"
+            if "2nd" in name:
+                return "2nd Sem"
+            if "summer" in name:
+                return "Summer"
+            return name
 
-        # 🎯 Only match semester + program
+        normalized_sem = normalize_semester(active_sem["semester_name"])
+
         subjects = list(
             db.subjects.find({
-                "semester": {"$regex": f"^{semester_name}$", "$options": "i"},
+                "semester": normalized_sem,
                 "course": {"$regex": f"^{admin_program}$", "$options": "i"}
             }).sort("year_level", 1)
         )
 
-        # Convert IDs
         for subj in subjects:
             subj["_id"] = str(subj["_id"])
 
         return jsonify({
             "active_semester": {
                 "_id": str(active_sem["_id"]),
-                "semester_name": semester_name,
+                "semester_name": active_sem["semester_name"],
+                "normalized_semester": normalized_sem,
                 "school_year": active_sem["school_year"],
                 "program": admin_program
             },
@@ -778,7 +786,6 @@ def get_active_subjects():
     except Exception as e:
         print("❌ Error in get_active_subjects:", e)
         return jsonify({"error": str(e)}), 500
-
 
 # ==============================
 # ✅ Class Management (Updated)
