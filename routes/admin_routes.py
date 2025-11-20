@@ -706,6 +706,23 @@ def update_single_semester():
     except Exception as e:
         print("❌ PUT /semester error:", e)
         return jsonify({"error": str(e)}), 500
+    
+@admin_bp.route("/api/admin/curriculum", methods=["GET"])
+@jwt_required()
+def get_curriculums():
+    """Return all distinct curriculum values from subjects collection."""
+    try:
+        # Fetch unique curriculum values
+        curr_list = subjects_col.distinct("curriculum")
+
+        # Clean and sort
+        curr_list = sorted(list({str(c).strip() for c in curr_list if c}))
+
+        return jsonify({"curriculums": curr_list}), 200
+
+    except Exception as e:
+        print("❌ Error in GET /curriculum:", e)
+        return jsonify({"error": "Failed to load curriculum list"}), 500
 
 @admin_bp.route("/api/admin/semester/activate", methods=["PUT"])
 def activate_single_semester():
