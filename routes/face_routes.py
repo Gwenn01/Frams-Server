@@ -629,6 +629,8 @@ def multi_face_recognize():
             "instructor_id": instructor_id,
             "instructor_first_name": cls.get("instructor_first_name"),
             "instructor_last_name": cls.get("instructor_last_name"),
+            "subject_code": cls.get("subject_code"),  # Add subject code here
+            "subject_title": cls.get("subject_title"),  # Add subject title here
         }), 200
 
     except Exception as e:
