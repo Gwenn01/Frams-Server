@@ -1206,7 +1206,10 @@ def get_free_classes():
 def get_all_instructors():
     instructors = list(instructors_col.find().sort("first_name", 1))
     formatted = []
+
     for instr in instructors:
+        embeddings = instr.get("embeddings", {})
+
         formatted.append(
             {
                 "_id": str(instr.get("_id")),
@@ -1214,9 +1217,13 @@ def get_all_instructors():
                 "first_name": instr.get("first_name"),
                 "last_name": instr.get("last_name"),
                 "email": instr.get("email"),
+                "registered": instr.get("registered", False),
+                "embeddings": list(embeddings.keys()) if embeddings else [],
             }
         )
+
     return jsonify(formatted), 200
+
 
 @admin_bp.route("/api/classes/<class_id>/assign-instructor", methods=["PUT"])
 @jwt_required()
