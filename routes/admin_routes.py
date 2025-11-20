@@ -739,46 +739,37 @@ def activate_single_semester():
 @jwt_required()
 def get_active_subjects():
     try:
-        # Get admin's program
+        # 🧩 Get program from JWT claims
         claims = get_jwt()
         admin_program = claims.get("program")
 
         if not admin_program:
             return jsonify({"error": "Admin program not found in token"}), 400
 
-        # Get active semester
+        # 🧠 Fetch the active semester
         active_sem = db.semesters.find_one({"is_active": True})
         if not active_sem:
             return jsonify({"message": "No active semester found"}), 404
 
-        sem_name_raw = active_sem["semester_name"]      # e.g. "2nd Semester"
-        school_year = active_sem["school_year"]
+        semester_name = active_sem["semester_name"]  # "2nd Semester"
 
-        # Normalize “2nd Semester” → “2nd Sem”
-        if "1st" in sem_name_raw.lower():
-            sem_name = "1st Sem"
-        elif "2nd" in sem_name_raw.lower():
-            sem_name = "2nd Sem"
-        elif "summer" in sem_name_raw.lower():
-            sem_name = "Summer"
-        else:
-            sem_name = sem_name_raw.strip()
+        # 🎯 Only match semester + program
+        subjects = list(
+            db.subjects.find({
+                "semester": {"$regex": f"^{semester_name}$", "$options": "i"},
+                "course": {"$regex": f"^{admin_program}$", "$options": "i"}
+            }).sort("year_level", 1)
+        )
 
-        # Fetch filtered subjects
-        subjects = list(db.subjects.find({
-            "semester": sem_name,
-            "school_year": school_year,
-            "course": {"$regex": f"^{admin_program}$", "$options": "i"}
-        }).sort("year_level", 1))
-
-        for s in subjects:
-            s["_id"] = str(s["_id"])
+        # Convert IDs
+        for subj in subjects:
+            subj["_id"] = str(subj["_id"])
 
         return jsonify({
             "active_semester": {
                 "_id": str(active_sem["_id"]),
-                "semester_name": sem_name_raw,
-                "school_year": school_year,
+                "semester_name": semester_name,
+                "school_year": active_sem["school_year"],
                 "program": admin_program
             },
             "subjects": subjects
@@ -787,6 +778,7 @@ def get_active_subjects():
     except Exception as e:
         print("❌ Error in get_active_subjects:", e)
         return jsonify({"error": str(e)}), 500
+
 
 # ==============================
 # ✅ Class Management (Updated)
