@@ -495,7 +495,7 @@ def multi_face_recognize():
             SESSION_INSTRUCTOR_DETECTED[class_id] = False
 
         if class_id not in SESSION_LOGGED_STUDENTS:
-            SESSION_LOGGED_STUDENTS[class_id] = set()
+            SESSION_LOGGED_STUDENTS[class_id] = {} 
 
         results = []
         instructor_detected = SESSION_INSTRUCTOR_DETECTED[class_id]
