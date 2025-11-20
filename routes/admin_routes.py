@@ -743,6 +743,7 @@ def activate_single_semester():
     except Exception as e:
         print("❌ PUT /semester/activate error:", e)
         return jsonify({"error": str(e)}), 500
+    
 
 @admin_bp.route("/api/admin/subjects/active", methods=["GET"])
 @jwt_required()
