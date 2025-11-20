@@ -760,31 +760,38 @@ def get_active_subjects():
     try:
         # 🧩 Get program from JWT claims
         claims = get_jwt()
-        admin_program = claims.get("program")  # e.g., "BSINFOTECH" or "BSCS"
+        admin_program = claims.get("program")  # e.g., "BSINFOTECH", "BSCS"
 
         if not admin_program:
             return jsonify({"error": "Admin program not found in token"}), 400
 
-        # 🧠 Find currently active semester
+        # 🧠 Fetch the active semester
         active_sem = db.semesters.find_one({"is_active": True})
         if not active_sem:
             return jsonify({"message": "No active semester found"}), 404
 
-        # 🎯 Fetch subjects with both semester_id and course matching the admin's program
-        subjects = list(db.subjects.find({
-            "semester_id": str(active_sem["_id"]),
-            "course": {"$regex": f"^{admin_program}$", "$options": "i"}
-        }).sort("year_level", 1))
+        semester_name = active_sem["semester_name"]       # "2nd Semester"
+        school_year = active_sem["school_year"]           # "2026-2027"
 
-        # 🧹 Clean up _id fields for JSON response
+        # 🎯 Fetch ONLY subjects that belong to this active semester + program
+        subjects = list(
+            db.subjects.find({
+                "semester": semester_name,
+                "school_year": school_year,
+                "course": {"$regex": f"^{admin_program}$", "$options": "i"}  # Program filter
+            }).sort("year_level", 1)
+        )
+
+        # 🧹 Convert _id to string to avoid JSON errors
         for subj in subjects:
             subj["_id"] = str(subj["_id"])
 
-        # 🧾 Return active semester info + filtered subjects
+        # 🧾 Return structured response
         return jsonify({
             "active_semester": {
-                "semester_name": active_sem["semester_name"],
-                "school_year": active_sem["school_year"],
+                "_id": str(active_sem["_id"]),
+                "semester_name": semester_name,
+                "school_year": school_year,
                 "program": admin_program
             },
             "subjects": subjects
@@ -793,6 +800,7 @@ def get_active_subjects():
     except Exception as e:
         print("❌ Error in get_active_subjects:", e)
         return jsonify({"error": str(e)}), 500
+
 
 # ==============================
 # ✅ Class Management (Updated)
