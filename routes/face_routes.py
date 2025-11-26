@@ -457,9 +457,9 @@ def multi_face_recognize():
         now_nice = now.strftime("%I:%M %p")
 
         attendance_collection.update_one(
-            {"class_id": class_id, "date": today_str},
+            {"class_id": str(class_id), "date": today_str},
             {"$setOnInsert": {
-                "class_id": class_id,
+                "class_id": str(class_id),
                 "subject_code": cls.get("subject_code"),
                 "subject_title": cls.get("subject_title"),
                 "course": cls.get("course"),
@@ -471,7 +471,7 @@ def multi_face_recognize():
                 "instructor_first_name": cls.get("instructor_first_name", "Unknown"),
                 "instructor_last_name": cls.get("instructor_last_name", "Unknown"),
                 "date": today_str,
-                "students": cls.get("students", []),
+                "students": [],
                 "start_time": now_time,
                 "end_time": None,
             }},
@@ -538,7 +538,7 @@ def multi_face_recognize():
 
             # DB: CHECK IF ALREADY LOGGED
             existing = attendance_collection.find_one(
-                {"class_id": class_id, "date": today_str, "students.student_id": user_id},
+                {"class_id": str(class_id), "date": today_str, "students.student_id": user_id},
                 {"students.$": 1}
             )
 
@@ -568,13 +568,13 @@ def multi_face_recognize():
 
             # Update end_time
             attendance_collection.update_one(
-                {"class_id": class_id, "date": today_str},
+                {"class_id": str(class_id), "date": today_str},
                 {"$set": {"end_time": now_time}}
             )
 
             # Log student into DB
             attendance_collection.update_one(
-                {"class_id": class_id, "date": today_str},
+                {"class_id": str(class_id), "date": today_str},
                 {"$push": {
                     "students": {
                         "student_id": student_data["student_id"],
