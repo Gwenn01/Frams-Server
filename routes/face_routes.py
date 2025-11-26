@@ -418,7 +418,7 @@ def multi_face_recognize():
     try:
         data = request.get_json(silent=True) or {}
         faces = data.get("faces", [])
-        class_id = data.get("class_id")
+        class_id = str(data.get("class_id"))
 
         if not faces or not class_id:
             return jsonify({"error": "Missing faces or class_id"}), 400
