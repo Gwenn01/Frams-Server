@@ -471,7 +471,7 @@ def multi_face_recognize():
                 "instructor_first_name": cls.get("instructor_first_name", "Unknown"),
                 "instructor_last_name": cls.get("instructor_last_name", "Unknown"),
                 "date": today_str,
-                "students": [],
+                "students": cls.get("students", []),
                 "start_time": now_time,
                 "end_time": None,
             }},
