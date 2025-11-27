@@ -627,6 +627,7 @@ def multi_face_recognize():
     except Exception as e:
         current_app.logger.error(f"❌ /multi-recognize error: {traceback.format_exc()}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+    
 
 
 
