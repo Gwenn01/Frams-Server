@@ -157,21 +157,21 @@ def start_session():
         start_time_str = now.strftime("%H:%M:%S")
 
         log_doc = {
-            "class_id": str(class_id),
             "date": today_str,
-            "start_time": start_time_str,
-            "end_time": None,
+            "class_id": str(class_id),
             "course": cls.get("course"),
-            "section": cls.get("section"),
-            "year_level": cls.get("year_level"),
-            "school_year": cls.get("school_year"),
-            "semester": cls.get("semester"),
-            "subject_code": cls.get("subject_code"),
-            "subject_title": cls.get("subject_title"),
+            "end_time": None,
             "instructor_id": instructor.get("instructor_id"),
             "instructor_first_name": instructor.get("first_name"),
             "instructor_last_name": instructor.get("last_name"),
-            "students": []
+            "school_year": cls.get("school_year"),
+            "section": cls.get("section"),
+            "semester": cls.get("semester"),
+            "year_level": cls.get("year_level"),
+            "start_time": start_time_str,
+            "students": [],     
+            "subject_code": cls.get("subject_code"),
+            "subject_title": cls.get("subject_title")
         }
 
         inserted = attendance_collection.insert_one(log_doc)
