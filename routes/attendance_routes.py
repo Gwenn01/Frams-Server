@@ -88,25 +88,20 @@ def start_session():
         if not instructor:
             return jsonify({"error": "Instructor not found"}), 404
 
-        # -------------------------------------------------
-        # 2. VALIDATE FACE REGISTRATION (at least 1 angle)
-        # -------------------------------------------------
+        # REQUIRE AT LEAST 1 FACE ANGLE
         if not instructor.get("registered"):
             return jsonify({"error": "Instructor has not registered their face"}), 400
 
         embeddings = instructor.get("embeddings", {})
         has_one_angle = any(
-            isinstance(embeddings.get(angle), list) and len(embeddings.get(angle)) == 512
-            for angle in ["front", "left", "right", "up", "down"]
+            isinstance(embeddings.get(a), list) and len(embeddings.get(a)) == 512
+            for a in ["front", "left", "right", "up", "down"]
         )
-
         if not has_one_angle:
-            return jsonify({
-                "error": "Instructor must register at least one valid face angle to start a session."
-            }), 400
+            return jsonify({"error": "Instructor must register at least 1 valid angle."}), 400
 
         # -------------------------------------------------
-        # 3. FETCH CLASS
+        # 2. FETCH CLASS DOCUMENT
         # -------------------------------------------------
         cls = classes_collection.find_one({"_id": ObjectId(class_id)})
         if not cls:
@@ -114,80 +109,79 @@ def start_session():
 
         schedule_blocks = cls.get("schedule_blocks", [])
         if not schedule_blocks:
-            return jsonify({"error": "No schedule found for this class"}), 400
+            return jsonify({"error": "This class has no schedule."}), 400
 
         # -------------------------------------------------
-        # 4. VALIDATE TIME AGAINST CLASS SCHEDULE
+        # 3. VALIDATE TIME AGAINST CLASS SCHEDULE
         # -------------------------------------------------
         now = datetime.now(PH_TZ)
-        current_day = now.strftime("%a")  
+        current_day = now.strftime("%a")
         current_time = now.strftime("%H:%M")
 
         is_scheduled_now = False
-        matching_block = None
-
         for block in schedule_blocks:
-            days = block.get("days", [])
-            start_time = block.get("start")
-            end_time = block.get("end")
-
-            if not days or not start_time or not end_time:
-                continue
-
-            if current_day in days and start_time <= current_time <= end_time:
+            if (
+                current_day in block.get("days", [])
+                and block.get("start") <= current_time <= block.get("end")
+            ):
                 is_scheduled_now = True
-                matching_block = block
                 break
 
         if not is_scheduled_now:
-            readable_sched = [
-                f"{blk.get('days')} {blk.get('start')}–{blk.get('end')}"
-                for blk in schedule_blocks
+            readable = [
+                f"{b.get('days')} {b.get('start')}–{b.get('end')}"
+                for b in schedule_blocks
             ]
-
             return jsonify({
                 "error": (
                     "⛔ Cannot start session.\n"
-                    "This class is only scheduled during:\n"
-                    f"{readable_sched}"
+                    "Class schedule:\n"
+                    f"{readable}"
                 )
             }), 400
 
         # -------------------------------------------------
-        # 5. PREVENT MULTIPLE SESSIONS PER INSTRUCTOR
+        # 4. PREVENT MULTIPLE ACTIVE SESSIONS
         # -------------------------------------------------
         already_active = classes_collection.find_one({
             "is_attendance_active": True,
             "instructor_id": instructor_id
         })
-
         if already_active:
-            return jsonify({
-                "error": "You already have an active attendance session. Stop it first."
-            }), 400
+            return jsonify({"error": "You already have an active session."}), 400
 
         # -------------------------------------------------
-        # 6. CREATE NEW ATTENDANCE LOG
+        # 5. CREATE COMPLETE ATTENDANCE LOG DOCUMENT
         # -------------------------------------------------
         today_str = now.strftime("%Y-%m-%d")
+        start_time_str = now.strftime("%H:%M:%S")
 
-        new_log = {
+        log_doc = {
             "class_id": str(class_id),
             "date": today_str,
-            "start_time": now.strftime("%H:%M:%S"),
+            "start_time": start_time_str,
             "end_time": None,
+            "course": cls.get("course"),
+            "section": cls.get("section"),
+            "year_level": cls.get("year_level"),
+            "school_year": cls.get("school_year"),
+            "semester": cls.get("semester"),
+            "subject_code": cls.get("subject_code"),
+            "subject_title": cls.get("subject_title"),
+            "instructor_id": instructor.get("instructor_id"),
+            "instructor_first_name": instructor.get("first_name"),
+            "instructor_last_name": instructor.get("last_name"),
             "students": []
         }
 
-        inserted = attendance_collection.insert_one(new_log)
+        inserted = attendance_collection.insert_one(log_doc)
         log_id = str(inserted.inserted_id)
 
-        # Session expires in 30 minutes
+        # -------------------------------------------------
+        # 6. ACTIVATE SESSION
+        # -------------------------------------------------
         end_time = now + timedelta(minutes=30)
 
-        # -------------------------------------------------
-        # 7. ACTIVATE CLASS SESSION + STORE LOG ID
-        # -------------------------------------------------
         classes_collection.update_one(
             {"_id": ObjectId(class_id)},
             {"$set": {
@@ -201,19 +195,20 @@ def start_session():
 
         return jsonify({
             "success": True,
-            "message": "Attendance session started",
+            "message": "Attendance session started successfully",
             "session": {
                 "class_id": class_id,
                 "log_id": log_id,
-                "start_time": now.strftime("%H:%M:%S"),
+                "start_time": start_time_str,
                 "end_time": end_time.strftime("%H:%M:%S")
             }
         }), 200
 
     except Exception as e:
-        return jsonify({"error": f"Internal error: {str(e)}"}), 500
+        import traceback
+        print("❌ ERROR in /start-session:", traceback.format_exc())
+        return jsonify({"error": "Internal server error"}), 500
 
-    
 # ✅ Stop attendance session (auto-mark absentees asynchronously)
 @attendance_bp.route("/stop-session", methods=["POST"])
 def stop_session():
@@ -235,10 +230,12 @@ def stop_session():
         if not active_log_id:
             return jsonify({"error": "No active attendance session found"}), 400
 
-        # -------------------------------------------------
-        # 2. STOP THE SESSION IN CLASS DOCUMENT
-        # -------------------------------------------------
         now = datetime.now(PH_TZ)
+        now_time = now.strftime("%H:%M:%S")
+
+        # -------------------------------------------------
+        # 2. STOP ACTIVE SESSION IN CLASS DOCUMENT
+        # -------------------------------------------------
         classes_collection.update_one(
             {"_id": ObjectId(class_id)},
             {"$set": {
@@ -249,60 +246,70 @@ def stop_session():
         )
 
         # -------------------------------------------------
-        # 3. FETCH TODAY'S ACTIVE ATTENDANCE LOG
+        # 3. FETCH THE ACTIVE ATTENDANCE LOG DOCUMENT
         # -------------------------------------------------
         attendance_log = attendance_collection.find_one({"_id": ObjectId(active_log_id)})
         if not attendance_log:
             return jsonify({"error": "Attendance log not found"}), 404
 
-        # List of student IDs present or late
-        logged_students = attendance_log.get("students", [])
-        logged_ids = {s["student_id"] for s in logged_students}
+        # Update end_time inside the attendance log
+        attendance_collection.update_one(
+            {"_id": ObjectId(active_log_id)},
+            {"$set": {"end_time": now_time}}
+        )
 
         # -------------------------------------------------
-        # 4. GET ALL ENROLLED STUDENTS FOR THE CLASS
+        # 4. IDENTIFY PRESENT STUDENTS
+        # -------------------------------------------------
+        logged_students = attendance_log.get("students", [])
+        already_marked_ids = {s["student_id"] for s in logged_students}
+
+        # -------------------------------------------------
+        # 5. GET ALL ENROLLED STUDENTS FROM CLASS
         # -------------------------------------------------
         all_students = cls.get("students", [])
         absent_students = [
-            s for s in all_students if s.get("student_id") not in logged_ids
+            s for s in all_students
+            if s.get("student_id") not in already_marked_ids
         ]
 
         # -------------------------------------------------
-        # 5. MARK ABSENTEES INTO THE SAME LOG
+        # 6. MARK ABSENTEES IN THE SAME ATTENDANCE LOG
         # -------------------------------------------------
         if absent_students:
-            for s in absent_students:
-                attendance_collection.update_one(
-                    {"_id": ObjectId(active_log_id)},
-                    {"$push": {
-                        "students": {
-                            "student_id": s["student_id"],
-                            "first_name": s.get("first_name", ""),
-                            "last_name": s.get("last_name", ""),
-                            "status": "Absent",
-                            "time": now.strftime("%H:%M:%S"),
-                        }
-                    }}
-                )
+            bulk_absent_entries = [
+                {
+                    "student_id": s["student_id"],
+                    "first_name": s.get("first_name", ""),
+                    "last_name": s.get("last_name", ""),
+                    "status": "Absent",
+                    "time": now_time
+                }
+                for s in absent_students
+            ]
+
+            attendance_collection.update_one(
+                {"_id": ObjectId(active_log_id)},
+                {"$push": {"students": {"$each": bulk_absent_entries}}}
+            )
 
         # -------------------------------------------------
-        # 6. RETURN RESPONSE
+        # 7. RESPONSE
         # -------------------------------------------------
         return jsonify({
             "success": True,
             "message": (
-                f"🛑 Session stopped. Marked {len(absent_students)} students as absent."
+                f"🛑 Session stopped successfully. "
+                f"Marked {len(absent_students)} students as Absent."
             ),
-            "absent_count": len(absent_students),
-            "log_id": active_log_id
+            "log_id": active_log_id,
+            "absent_count": len(absent_students)
         }), 200
 
     except Exception:
         import traceback
         print("❌ Error in /stop-session:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
-
-    
 
 # ✅ Get currently active session (with auto-detect fallback)
 @attendance_bp.route("/active-session", methods=["GET"])
