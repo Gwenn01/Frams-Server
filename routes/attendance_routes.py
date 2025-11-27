@@ -167,11 +167,11 @@ def start_session():
             "school_year": cls.get("school_year"),
             "section": cls.get("section"),
             "semester": cls.get("semester"),
-            "year_level": cls.get("year_level"),
             "start_time": start_time_str,
             "students": [],     
             "subject_code": cls.get("subject_code"),
-            "subject_title": cls.get("subject_title")
+            "subject_title": cls.get("subject_title"),
+            "year_level": cls.get("year_level")
         }
 
         inserted = attendance_collection.insert_one(log_doc)
