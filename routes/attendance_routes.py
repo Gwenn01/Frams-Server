@@ -94,7 +94,6 @@ def start_session():
         if not instructor:
             return jsonify({"error": "Instructor not found"}), 404
 
-        # Instructor must have registered face
         if not instructor.get("registered"):
             return jsonify({"error": "Instructor has not registered their face"}), 400
 
@@ -160,12 +159,12 @@ def start_session():
             }}
         )
 
-        # NEW SESSION MEMORY (IMPORTANT FIX)
+        # RESET MEMORY (IMPORTANT)
         SESSION_LOGGED_STUDENTS[class_id] = {}
         SESSION_INSTRUCTOR_DETECTED[class_id] = False
 
         # =====================================================
-        # 6. CREATE NEW ATTENDANCE LOG DOCUMENT
+        # 5. CREATE NEW ATTENDANCE LOG DOCUMENT
         # =====================================================
         today_str = now.strftime("%Y-%m-%d")
         start_time_str = now.strftime("%H:%M:%S")
@@ -182,14 +181,14 @@ def start_session():
             "section": cls.get("section"),
             "semester": cls.get("semester"),
             "start_time": start_time_str,
-            "students": [],  # WILL BE FILLED BY multi-recognize
+            "students": [],
             "subject_code": cls.get("subject_code"),
             "subject_title": cls.get("subject_title"),
             "year_level": cls.get("year_level")
         }
 
         inserted = attendance_collection.insert_one(log_doc)
-        log_id = str(inserted.inserted_id)
+        log_oid = inserted.inserted_id      # REAL OBJECTID
 
         # =====================================================
         # 7. UPDATE CLASS WITH NEW ACTIVE SESSION
@@ -203,7 +202,7 @@ def start_session():
                 "attendance_start_time": now.isoformat(),
                 "attendance_end_time": end_time.isoformat(),
                 "instructor_id": instructor_id,
-                "active_session_log_id": log_id
+                "active_session_log_id": log_oid   # IMPORTANT FIX
             }}
         )
 
@@ -215,7 +214,7 @@ def start_session():
             "message": "Attendance session started successfully",
             "session": {
                 "class_id": class_id,
-                "log_id": log_id,
+                "log_id": str(log_oid),   # return string only for the frontend
                 "start_time": start_time_str,
                 "end_time": end_time.strftime("%H:%M:%S")
             }
