@@ -87,14 +87,14 @@ def start_session():
         if not class_id or not instructor_id:
             return jsonify({"error": "Missing class_id or instructor_id"}), 400
 
-        # -------------------------------------------------
+        # =====================================================
         # 1. FETCH INSTRUCTOR
-        # -------------------------------------------------
+        # =====================================================
         instructor = instructor_collection.find_one({"instructor_id": instructor_id})
         if not instructor:
             return jsonify({"error": "Instructor not found"}), 404
 
-        # REQUIRE AT LEAST 1 FACE ANGLE
+        # Instructor must have registered face
         if not instructor.get("registered"):
             return jsonify({"error": "Instructor has not registered their face"}), 400
 
@@ -106,10 +106,14 @@ def start_session():
         if not has_one_angle:
             return jsonify({"error": "Instructor must register at least 1 valid angle."}), 400
 
-        # -------------------------------------------------
+        # =====================================================
         # 2. FETCH CLASS DOCUMENT
-        # -------------------------------------------------
-        cls = classes_collection.find_one({"_id": ObjectId(class_id)})
+        # =====================================================
+        try:
+            cls = classes_collection.find_one({"_id": ObjectId(class_id)})
+        except:
+            return jsonify({"error": "Invalid class_id"}), 400
+
         if not cls:
             return jsonify({"error": "Class not found"}), 404
 
@@ -117,23 +121,23 @@ def start_session():
         if not schedule_blocks:
             return jsonify({"error": "This class has no schedule."}), 400
 
-        # -------------------------------------------------
-        # 3. VALIDATE TIME AGAINST CLASS SCHEDULE
-        # -------------------------------------------------
+        # =====================================================
+        # 3. VALIDATE CURRENT TIME WITH CLASS SCHEDULE
+        # =====================================================
         now = datetime.now(PH_TZ)
         current_day = now.strftime("%a")
         current_time = now.strftime("%H:%M")
 
         is_scheduled_now = any(
-            current_day in block.get("days", []) and
-            block.get("start") <= current_time <= block.get("end")
-            for block in schedule_blocks
+            current_day in blk.get("days", []) and
+            blk.get("start") <= current_time <= blk.get("end")
+            for blk in schedule_blocks
         )
 
         if not is_scheduled_now:
             readable = [
-                f"{b.get('days')} {b.get('start')}–{b.get('end')}"
-                for b in schedule_blocks
+                f"{blk.get('days')} {blk.get('start')}–{blk.get('end')}"
+                for blk in schedule_blocks
             ]
             return jsonify({
                 "error": (
@@ -143,9 +147,9 @@ def start_session():
                 )
             }), 400
 
-        # -------------------------------------------------
-        # 4. HARD RESET OLD SESSION (IMPORTANT FIX)
-        # -------------------------------------------------
+        # =====================================================
+        # 4. HARD RESET OLD SESSION FOR THIS CLASS
+        # =====================================================
         classes_collection.update_one(
             {"_id": ObjectId(class_id)},
             {"$unset": {
@@ -156,15 +160,19 @@ def start_session():
             }}
         )
 
-        # -------------------------------------------------
-        # 5. CLEAR SERVER MEMORY FOR THIS CLASS
-        # -------------------------------------------------
+        # =====================================================
+        # 5. CLEAR SERVER MEMORY + RE-INITIALIZE SESSION STATE
+        # =====================================================
         SESSION_LOGGED_STUDENTS.pop(class_id, None)
         SESSION_INSTRUCTOR_DETECTED.pop(class_id, None)
 
-        # -------------------------------------------------
+        # NEW SESSION MEMORY (IMPORTANT FIX)
+        SESSION_LOGGED_STUDENTS[class_id] = {}
+        SESSION_INSTRUCTOR_DETECTED[class_id] = False
+
+        # =====================================================
         # 6. CREATE NEW ATTENDANCE LOG DOCUMENT
-        # -------------------------------------------------
+        # =====================================================
         today_str = now.strftime("%Y-%m-%d")
         start_time_str = now.strftime("%H:%M:%S")
 
@@ -180,7 +188,7 @@ def start_session():
             "section": cls.get("section"),
             "semester": cls.get("semester"),
             "start_time": start_time_str,
-            "students": [],
+            "students": [],  # WILL BE FILLED BY multi-recognize
             "subject_code": cls.get("subject_code"),
             "subject_title": cls.get("subject_title"),
             "year_level": cls.get("year_level")
@@ -189,9 +197,9 @@ def start_session():
         inserted = attendance_collection.insert_one(log_doc)
         log_id = str(inserted.inserted_id)
 
-        # -------------------------------------------------
-        # 7. ACTIVATE SESSION
-        # -------------------------------------------------
+        # =====================================================
+        # 7. UPDATE CLASS WITH NEW ACTIVE SESSION
+        # =====================================================
         end_time = now + timedelta(minutes=30)
 
         classes_collection.update_one(
@@ -205,6 +213,9 @@ def start_session():
             }}
         )
 
+        # =====================================================
+        # 8. FINAL RESPONSE
+        # =====================================================
         return jsonify({
             "success": True,
             "message": "Attendance session started successfully",
