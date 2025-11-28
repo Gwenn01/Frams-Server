@@ -160,12 +160,6 @@ def start_session():
             }}
         )
 
-        # =====================================================
-        # 5. CLEAR SERVER MEMORY + RE-INITIALIZE SESSION STATE
-        # =====================================================
-        SESSION_LOGGED_STUDENTS.clear()
-        SESSION_INSTRUCTOR_DETECTED.clear()
-
         # NEW SESSION MEMORY (IMPORTANT FIX)
         SESSION_LOGGED_STUDENTS[class_id] = {}
         SESSION_INSTRUCTOR_DETECTED[class_id] = False
