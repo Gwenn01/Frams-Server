@@ -7,6 +7,8 @@ from utils.attendance_session import (
     start_attendance_session,
     stop_attendance_session,
 )
+import traceback
+
 from config.db_config import db
 
 # 🔹 Work with classes instead of subjects
