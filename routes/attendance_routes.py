@@ -235,10 +235,14 @@ def stop_session():
         if not class_id:
             return jsonify({"error": "Missing class_id"}), 400
 
-        # -------------------------------------------------
-        # 1. FETCH CLASS
-        # -------------------------------------------------
-        cls = classes_collection.find_one({"_id": ObjectId(class_id)})
+        # =====================================================
+        # 1. FETCH CLASS DOCUMENT
+        # =====================================================
+        try:
+            cls = classes_collection.find_one({"_id": ObjectId(class_id)})
+        except:
+            return jsonify({"error": "Invalid class_id"}), 400
+
         if not cls:
             return jsonify({"error": "Class not found"}), 404
 
@@ -246,12 +250,23 @@ def stop_session():
         if not active_log_id:
             return jsonify({"error": "No active attendance session found"}), 400
 
+        # =====================================================
+        # 1.1 PATCH — handle ObjectId or string safely
+        # =====================================================
+        if isinstance(active_log_id, ObjectId):
+            log_id = active_log_id
+        else:
+            try:
+                log_id = ObjectId(str(active_log_id))
+            except:
+                return jsonify({"error": "Invalid active_session_log_id"}), 400
+
         now = datetime.now(PH_TZ)
         now_time = now.strftime("%H:%M:%S")
 
-        # -------------------------------------------------
-        # 2. STOP ACTIVE SESSION IN CLASS DOCUMENT
-        # -------------------------------------------------
+        # =====================================================
+        # 2. STOP SESSION IN CLASS DOCUMENT
+        # =====================================================
         classes_collection.update_one(
             {"_id": ObjectId(class_id)},
             {"$set": {
@@ -261,64 +276,85 @@ def stop_session():
             }}
         )
 
-        # -------------------------------------------------
-        # 3. FETCH THE ACTIVE ATTENDANCE LOG DOCUMENT
-        # -------------------------------------------------
-        attendance_log = attendance_collection.find_one({"_id": ObjectId(active_log_id)})
-        if not attendance_log:
+        # =====================================================
+        # 3. FETCH ATTENDANCE LOG
+        # =====================================================
+        att_log = attendance_collection.find_one({"_id": log_id})
+        if not att_log:
             return jsonify({"error": "Attendance log not found"}), 404
 
-        # Update end_time inside the attendance log
+        # UPDATE end_time in attendance_log
         attendance_collection.update_one(
-            {"_id": ObjectId(active_log_id)},
+            {"_id": log_id},
             {"$set": {"end_time": now_time}}
         )
 
-        # -------------------------------------------------
+        # =====================================================
         # 4. IDENTIFY PRESENT STUDENTS
-        # -------------------------------------------------
-        logged_students = attendance_log.get("students", [])
-        already_marked_ids = {s["student_id"] for s in logged_students}
+        # =====================================================
+        logged_students = att_log.get("students", [])
+        already_marked_ids = {str(s["student_id"]) for s in logged_students}
 
-        # -------------------------------------------------
-        # 5. GET ALL ENROLLED STUDENTS FROM CLASS
-        # -------------------------------------------------
-        all_students = cls.get("students", [])
-        absent_students = [
-            s for s in all_students
-            if s.get("student_id") not in already_marked_ids
-        ]
+        # =====================================================
+        # 5. GET ALL ENROLLED STUDENTS IN CLASS
+        # =====================================================
+        class_students = cls.get("students", [])
+        class_student_ids = {
+            str(s.get("student_id")): s for s in class_students
+        }
 
-        # -------------------------------------------------
-        # 6. MARK ABSENTEES IN THE SAME ATTENDANCE LOG
-        # -------------------------------------------------
-        if absent_students:
-            bulk_absent_entries = [
-                {
-                    "student_id": s["student_id"],
-                    "first_name": s.get("first_name", ""),
-                    "last_name": s.get("last_name", ""),
+        if not class_student_ids:
+            # Class has zero enrolled students
+            return jsonify({
+                "success": True,
+                "message": "Session stopped. No students enrolled in this class.",
+                "log_id": str(log_id),
+                "absent_count": 0
+            }), 200
+
+        # =====================================================
+        # 6. COMPUTE ABSENT STUDENTS
+        # =====================================================
+        absent_students = []
+
+        for stud_id, info in class_student_ids.items():
+            if stud_id not in already_marked_ids:
+                absent_students.append({
+                    "student_id": stud_id,
+                    "first_name": info.get("first_name", ""),
+                    "last_name": info.get("last_name", ""),
                     "status": "Absent",
                     "time": now_time
-                }
-                for s in absent_students
-            ]
+                })
 
+        # =====================================================
+        # 7. INSERT ABSENTEES IN DB
+        # =====================================================
+        if absent_students:
             attendance_collection.update_one(
-                {"_id": ObjectId(active_log_id)},
-                {"$push": {"students": {"$each": bulk_absent_entries}}}
+                {"_id": log_id},
+                {"$push": {"students": {"$each": absent_students}}}
             )
 
-        # -------------------------------------------------
-        # 7. RESPONSE
-        # -------------------------------------------------
+        # =====================================================
+        # 8. CLEAR MEMORY FOR THIS CLASS (IMPORTANT)
+        # =====================================================
+        if class_id in SESSION_LOGGED_STUDENTS:
+            SESSION_LOGGED_STUDENTS[class_id] = {}
+
+        if class_id in SESSION_INSTRUCTOR_DETECTED:
+            SESSION_INSTRUCTOR_DETECTED[class_id] = False
+
+        # =====================================================
+        # 9. FINAL RESPONSE
+        # =====================================================
         return jsonify({
             "success": True,
             "message": (
                 f"🛑 Session stopped successfully. "
                 f"Marked {len(absent_students)} students as Absent."
             ),
-            "log_id": active_log_id,
+            "log_id": str(log_id),
             "absent_count": len(absent_students)
         }), 200
 
