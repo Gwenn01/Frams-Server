@@ -417,17 +417,17 @@ def multi_face_recognize():
 
     try:
         # =====================================================
-        # (0) Get request data
+        # (0) INPUT PARSING
         # =====================================================
         data = request.get_json(silent=True) or {}
         faces = data.get("faces") or []
-        class_id = str(data.get("class_id") or "")
+        class_id = str(data.get("class_id") or "").strip()
 
         if not faces or not class_id:
             return jsonify({"error": "Missing faces or class_id"}), 400
 
         # =====================================================
-        # (1) Load registered embeddings safely
+        # (1) LOAD REGISTERED FACES
         # =====================================================
         registered_faces = get_cached_faces(class_id)
         if not isinstance(registered_faces, list):
@@ -441,35 +441,28 @@ def multi_face_recognize():
                 "instructor_detected": False
             }), 200
 
-        payload = {
-            "faces": faces,
-            "registered_faces": registered_faces
-        }
+        payload = {"faces": faces, "registered_faces": registered_faces}
 
         # =====================================================
-        # (2) Call HuggingFace microservice
+        # (2) CALL HF RECOGNITION API
         # =====================================================
         try:
-            res = requests.post(
+            hf_res = requests.post(
                 f"{HF_AI_URL}/recognize-multi",
                 json=payload,
-                timeout=90
+                timeout=60
             )
-            if res.status_code != 200:
-                return jsonify({"error": "AI service error"}), 500
+            if hf_res.status_code != 200:
+                return jsonify({"error": "AI service failed"}), 500
 
-            hf_result = res.json()
-        except Exception:
+            hf_result = hf_res.json()
+        except:
             return jsonify({"error": "AI service unreachable"}), 500
-
-        # Validate HF result
-        if "recognized" not in hf_result:
-            return jsonify({"error": "Invalid AI response"}), 500
 
         recognized = hf_result.get("recognized") or []
 
         # =====================================================
-        # (3) Load class document
+        # (3) FETCH CLASS DOCUMENT
         # =====================================================
         try:
             cls = classes_collection.find_one({"_id": ObjectId(class_id)})
@@ -486,38 +479,39 @@ def multi_face_recognize():
             return jsonify({"error": "No active attendance log for this class"}), 400
 
         # =====================================================
-        # (4) Load attendance log document
+        # (4) LOAD ATTENDANCE LOG
         # =====================================================
         try:
             log_id = ObjectId(log_id_raw)
         except:
-            return jsonify({"error": "Invalid active_session_log_id"}), 500
+            return jsonify({"error": "Invalid log id"}), 500
 
         att_log = attendance_collection.find_one({"_id": log_id})
         if not att_log:
             return jsonify({"error": "Attendance log not found"}), 500
 
         # =====================================================
-        # (5) Prepare timestamp info
+        # (5) TIME / FORMAT
         # =====================================================
         now = datetime.now(PH_TZ)
         now_time = now.strftime("%H:%M:%S")
-        now_nice = now.strftime("%I:%M %p")
+        now_readable = now.strftime("%I:%M %p")
 
         # =====================================================
-        # (6) Initialize session memory
+        # (6) SESSION MEMORY INIT
         # =====================================================
+        # These MUST EXIST (fixes undefined errors)
         if class_id not in SESSION_INSTRUCTOR_DETECTED:
             SESSION_INSTRUCTOR_DETECTED[class_id] = False
 
         if class_id not in SESSION_LOGGED_STUDENTS:
             SESSION_LOGGED_STUDENTS[class_id] = {}
 
-        results = []
         instructor_detected = SESSION_INSTRUCTOR_DETECTED[class_id]
+        results = []
 
         # =====================================================
-        # (7) No recognized faces → return current session state
+        # (7) NO FACES RECOGNIZED
         # =====================================================
         if len(recognized) == 0:
             return jsonify({
@@ -538,56 +532,55 @@ def multi_face_recognize():
         for face in recognized:
             user_id = face.get("user_id")
             is_instructor = face.get("is_instructor", False)
-            bbox = face.get("bbox") or None
+            bbox = face.get("bbox")
 
             if not user_id:
                 continue
 
-            # --------------------------------------------------
+            # -----------------------------------
             # INSTRUCTOR DETECTED
-            # --------------------------------------------------
+            # -----------------------------------
             if is_instructor or user_id == instructor_id:
                 SESSION_INSTRUCTOR_DETECTED[class_id] = True
                 instructor_detected = True
                 continue
 
-            # --------------------------------------------------
-            # FETCH STUDENT DOCUMENT
-            # --------------------------------------------------
+            # -----------------------------------
+            # STUDENT MATCH
+            # -----------------------------------
             student = get_student_by_id(user_id)
             if not student:
                 continue
 
+            stud_id = student.get("student_id")
+            first = student.get("first_name") or student.get("First_Name", "")
+            last = student.get("last_name") or student.get("Last_Name", "")
+
             student_data = {
-                "student_id": student.get("student_id"),
-                "first_name": student.get("first_name") or student.get("First_Name", ""),
-                "last_name": student.get("last_name") or student.get("Last_Name", "")
+                "student_id": stud_id,
+                "first_name": first,
+                "last_name": last,
             }
 
-            true_student_id = student_data["student_id"]
-
-            # --------------------------------------------------
-            # Already logged (session memory)
-            # --------------------------------------------------
+            # -----------------------------------
+            # Already logged (memory)
+            # -----------------------------------
             if user_id in SESSION_LOGGED_STUDENTS[class_id]:
                 prev_status = SESSION_LOGGED_STUDENTS[class_id][user_id]["status"]
 
                 results.append({
                     **student_data,
                     "status": prev_status,
-                    "time": now_nice,
+                    "time": now_readable,
                     "bbox": bbox
                 })
                 continue
 
-            # --------------------------------------------------
+            # -----------------------------------
             # Already logged (database)
-            # --------------------------------------------------
+            # -----------------------------------
             existing = attendance_collection.find_one(
-                {
-                    "_id": log_id,
-                    "students.student_id": true_student_id   # ← FIXED
-                },
+                {"_id": log_id, "students.student_id": stud_id},
                 {"students.$": 1}
             )
 
@@ -599,71 +592,59 @@ def multi_face_recognize():
                 results.append({
                     **student_data,
                     "status": status,
-                    "time": now_nice,
+                    "time": now_readable,
                     "bbox": bbox
                 })
                 continue
 
-            # --------------------------------------------------
-            # NEW STUDENT → compute Present/Late CORRECTLY
-            # --------------------------------------------------
-            status = "Present"
-            class_start_str = cls.get("start_time")
+            # -----------------------------------
+            # NEW STUDENT → compute present/late
+            # -----------------------------------
+            try:
+                class_start = att_log["start_time"]  # always in log
+                class_dt = datetime.strptime(class_start, "%H:%M:%S").replace(
+                    year=now.year, month=now.month, day=now.day
+                )
+                mins = (now - class_dt).total_seconds() / 60
+                status = "Late" if mins > 15 else "Present"
+            except:
+                status = "Present"
 
-            if class_start_str:  # "10:23:19"
-                try:
-                    class_start_dt = datetime.strptime(
-                        class_start_str,
-                        "%H:%M:%S"
-                    ).replace(
-                        year=now.year, month=now.month, day=now.day
-                    )
-
-                    mins_late = (now - class_start_dt).total_seconds() / 60
-                    if mins_late > 15:
-                        status = "Late"
-                except:
-                    status = "Present"
-
-            # --------------------------------------------------
-            # Update end_time heartbeat
-            # --------------------------------------------------
+            # -----------------------------------
+            # Update DB
+            # -----------------------------------
             attendance_collection.update_one(
                 {"_id": log_id},
-                {"$set": {"end_time": now_time}}
+                {
+                    "$push": {
+                        "students": {
+                            "student_id": stud_id,
+                            "first_name": first,
+                            "last_name": last,
+                            "status": status,
+                            "time": now_time
+                        }
+                    },
+                    "$set": {"end_time": now_time}
+                }
             )
 
-            # --------------------------------------------------
-            # INSERT NEW STUDENT RECORD
-            # --------------------------------------------------
-            attendance_collection.update_one(
-                {"_id": log_id},
-                {"$push": {
-                    "students": {
-                        "student_id": true_student_id,
-                        "first_name": student_data["first_name"],
-                        "last_name": student_data["last_name"],
-                        "status": status,
-                        "time": now_time
-                    }
-                }}
-            )
-
+            # Store in session
             SESSION_LOGGED_STUDENTS[class_id][user_id] = {"status": status}
 
             results.append({
                 **student_data,
                 "status": status,
-                "time": now_nice,
+                "time": now_readable,
                 "bbox": bbox
             })
 
         # =====================================================
-        # (9) FINAL RESPONSE
+        # (9) RETURN FINAL OUTPUT
         # =====================================================
         duration = time.time() - start_time
         current_app.logger.info(
-            f"multi-recognize: {len(results)} logged | inst={instructor_detected} | {duration:.2f}s"
+            f"[OK] multi-recognize {len(results)} | inst={instructor_detected}"
         )
 
         return jsonify({
@@ -678,11 +659,10 @@ def multi_face_recognize():
             "subject_title": cls.get("subject_title")
         }), 200
 
-    except Exception as e:
-        current_app.logger.error(
-            f"❌ multi-recognize ERROR:\n{traceback.format_exc()}"
-        )
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
+
 
 
     

@@ -27,6 +27,12 @@ attendance_bp = Blueprint("attendance", __name__)
 
 attendance_logs_col = db["attendance_logs"]
 
+# ============================================================
+# SESSION MEMORY
+# ============================================================
+SESSION_INSTRUCTOR_DETECTED = {}
+SESSION_LOGGED_STUDENTS = {}
+
 # -----------------------------
 # Timezone
 # -----------------------------
@@ -118,14 +124,11 @@ def start_session():
         current_day = now.strftime("%a")
         current_time = now.strftime("%H:%M")
 
-        is_scheduled_now = False
-        for block in schedule_blocks:
-            if (
-                current_day in block.get("days", [])
-                and block.get("start") <= current_time <= block.get("end")
-            ):
-                is_scheduled_now = True
-                break
+        is_scheduled_now = any(
+            current_day in block.get("days", []) and
+            block.get("start") <= current_time <= block.get("end")
+            for block in schedule_blocks
+        )
 
         if not is_scheduled_now:
             readable = [
@@ -141,17 +144,26 @@ def start_session():
             }), 400
 
         # -------------------------------------------------
-        # 4. PREVENT MULTIPLE ACTIVE SESSIONS
+        # 4. HARD RESET OLD SESSION (IMPORTANT FIX)
         # -------------------------------------------------
-        already_active = classes_collection.find_one({
-            "is_attendance_active": True,
-            "instructor_id": instructor_id
-        })
-        if already_active:
-            return jsonify({"error": "You already have an active session."}), 400
+        classes_collection.update_one(
+            {"_id": ObjectId(class_id)},
+            {"$unset": {
+                "is_attendance_active": "",
+                "attendance_start_time": "",
+                "attendance_end_time": "",
+                "active_session_log_id": "",
+            }}
+        )
 
         # -------------------------------------------------
-        # 5. CREATE COMPLETE ATTENDANCE LOG DOCUMENT
+        # 5. CLEAR SERVER MEMORY FOR THIS CLASS
+        # -------------------------------------------------
+        SESSION_LOGGED_STUDENTS.pop(class_id, None)
+        SESSION_INSTRUCTOR_DETECTED.pop(class_id, None)
+
+        # -------------------------------------------------
+        # 6. CREATE NEW ATTENDANCE LOG DOCUMENT
         # -------------------------------------------------
         today_str = now.strftime("%Y-%m-%d")
         start_time_str = now.strftime("%H:%M:%S")
@@ -168,7 +180,7 @@ def start_session():
             "section": cls.get("section"),
             "semester": cls.get("semester"),
             "start_time": start_time_str,
-            "students": [],     
+            "students": [],
             "subject_code": cls.get("subject_code"),
             "subject_title": cls.get("subject_title"),
             "year_level": cls.get("year_level")
@@ -178,7 +190,7 @@ def start_session():
         log_id = str(inserted.inserted_id)
 
         # -------------------------------------------------
-        # 6. ACTIVATE SESSION
+        # 7. ACTIVATE SESSION
         # -------------------------------------------------
         end_time = now + timedelta(minutes=30)
 
