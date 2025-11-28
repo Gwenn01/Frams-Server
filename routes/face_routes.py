@@ -418,10 +418,16 @@ def multi_face_recognize():
     try:
         data = request.get_json(silent=True) or {}
         faces = data.get("faces", [])
-        class_id = str(data.get("class_id"))
+        class_id = data.get("class_id")   # DO NOT convert to string
 
         if not faces or not class_id:
             return jsonify({"error": "Missing faces or class_id"}), 400
+
+        # Ensure class_id is converted to ObjectId safely
+        try:
+            class_oid = ObjectId(class_id)
+        except:
+            return jsonify({"error": "Invalid class_id"}), 400
 
         # =====================================================
         # 1. LOAD REGISTERED EMBEDDINGS FOR THIS CLASS
@@ -440,7 +446,9 @@ def multi_face_recognize():
         # =====================================================
         # 2. CALL AI (HuggingFace microservice)
         # =====================================================
-        res = requests.post(f"{HF_AI_URL}/recognize-multi", json=payload, timeout=90)
+        res = requests.post(f"{HF_AI_URL}/recognize-multi",
+                            json=payload, timeout=90)
+
         if res.status_code != 200:
             return jsonify({"error": "AI service error"}), res.status_code
 
@@ -450,20 +458,22 @@ def multi_face_recognize():
         # =====================================================
         # 3. FETCH CLASS + ACTIVE ATTENDANCE LOG ID
         # =====================================================
-        cls = classes_collection.find_one({"_id": ObjectId(class_id)})
+        cls = classes_collection.find_one({"_id": class_oid})
         if not cls:
             return jsonify({"error": "Class not found"}), 404
 
         log_id = cls.get("active_session_log_id")
+
         if not log_id:
             return jsonify({"error": "No active attendance log for this class"}), 400
 
+        # log_id is already ObjectId — DO NOT convert again
         instructor_id = cls.get("instructor_id")
 
         # =====================================================
         # 4. FETCH ATTENDANCE LOG DOCUMENT
         # =====================================================
-        att_log = attendance_collection.find_one({"_id": ObjectId(log_id)})
+        att_log = attendance_collection.find_one({"_id": log_id})
         if not att_log:
             return jsonify({"error": "Attendance log not found"}), 500
 
@@ -472,26 +482,27 @@ def multi_face_recognize():
         now_nice = now.strftime("%I:%M %p")
 
         # =====================================================
-        # 5. INIT SESSION MEMORY (very fast)
+        # 5. INIT SESSION MEMORY
         # =====================================================
-        if class_id not in SESSION_INSTRUCTOR_DETECTED:
-            SESSION_INSTRUCTOR_DETECTED[class_id] = False
+        key = str(class_id)   # session key must be string
 
-        if class_id not in SESSION_LOGGED_STUDENTS:
-            SESSION_LOGGED_STUDENTS[class_id] = {}
+        if key not in SESSION_INSTRUCTOR_DETECTED:
+            SESSION_INSTRUCTOR_DETECTED[key] = False
+
+        if key not in SESSION_LOGGED_STUDENTS:
+            SESSION_LOGGED_STUDENTS[key] = {}
 
         results = []
-        instructor_detected = SESSION_INSTRUCTOR_DETECTED[class_id]
 
         # =====================================================
-        # 6. NO RECOGNIZED FACES → return session state
+        # 6. NO RECOGNIZED FACES
         # =====================================================
         if not recognized:
             return jsonify({
                 "success": True,
                 "logged": [],
                 "count": 0,
-                "instructor_detected": SESSION_INSTRUCTOR_DETECTED[class_id],
+                "instructor_detected": SESSION_INSTRUCTOR_DETECTED[key],
                 "instructor_id": instructor_id,
                 "instructor_first_name": cls.get("instructor_first_name"),
                 "instructor_last_name": cls.get("instructor_last_name"),
@@ -500,7 +511,7 @@ def multi_face_recognize():
             }), 200
 
         # =====================================================
-        # 7. PROCESS EACH RECOGNIZED FACE
+        # 7. PROCESS RECOGNIZED FACES
         # =====================================================
         for face in recognized:
             user_id = face.get("user_id")
@@ -513,8 +524,7 @@ def multi_face_recognize():
             # INSTRUCTOR DETECTED
             # ----------------------------------------------
             if is_instructor or user_id == instructor_id:
-                SESSION_INSTRUCTOR_DETECTED[class_id] = True
-                instructor_detected = True
+                SESSION_INSTRUCTOR_DETECTED[key] = True
                 continue
 
             # ----------------------------------------------
@@ -531,38 +541,37 @@ def multi_face_recognize():
             }
 
             # ----------------------------------------------
-            # Already logged (SESSION MEMORY)
+            # Already logged in SESSION
             # ----------------------------------------------
-            if user_id in SESSION_LOGGED_STUDENTS[class_id]:
-                prev_status = SESSION_LOGGED_STUDENTS[class_id][user_id]["status"]
+            if user_id in SESSION_LOGGED_STUDENTS[key]:
+                status = SESSION_LOGGED_STUDENTS[key][user_id]["status"]
+
                 results.append({
                     **student_data,
-                    "status": prev_status,
+                    "status": status,
                     "time": now_nice,
-                    "bbox": face.get("bbox"),
+                    "bbox": face.get("bbox")
                 })
                 continue
 
             # ----------------------------------------------
-            # Already logged in THIS attendance log?
+            # Already logged in DATABASE
             # ----------------------------------------------
             existing = attendance_collection.find_one(
-                {"_id": ObjectId(log_id), "students.student_id": user_id},
+                {"_id": log_id, "students.student_id": user_id},
                 {"students.$": 1}
             )
 
             if existing and existing.get("students"):
-                existing_status = existing["students"][0]["status"]
+                status = existing["students"][0]["status"]
 
-                SESSION_LOGGED_STUDENTS[class_id][user_id] = {
-                    "status": existing_status
-                }
+                SESSION_LOGGED_STUDENTS[key][user_id] = {"status": status}
 
                 results.append({
                     **student_data,
-                    "status": existing_status,
+                    "status": status,
                     "time": now_nice,
-                    "bbox": face.get("bbox"),
+                    "bbox": face.get("bbox")
                 })
                 continue
 
@@ -570,31 +579,29 @@ def multi_face_recognize():
             # NEW STUDENT → compute status
             # ----------------------------------------------
             class_start = cls.get("attendance_start_time")
-            if class_start:
-                try:
-                    class_start_dt = datetime.fromisoformat(
-                        str(class_start).replace("Z", "+00:00")
-                    )
-                    diff_min = (now - class_start_dt).total_seconds() / 60
-                    status = "Late" if diff_min > 15 else "Present"
-                except:
-                    status = "Present"
-            else:
+
+            try:
+                class_start_dt = datetime.fromisoformat(
+                    str(class_start).replace("Z", "+00:00")
+                )
+                diff_min = (now - class_start_dt).total_seconds() / 60
+                status = "Late" if diff_min > 15 else "Present"
+            except:
                 status = "Present"
 
             # ----------------------------------------------
-            # Update log end_time (heartbeat)
+            # Update log `end_time`
             # ----------------------------------------------
             attendance_collection.update_one(
-                {"_id": ObjectId(log_id)},
+                {"_id": log_id},
                 {"$set": {"end_time": now_time}}
             )
 
             # ----------------------------------------------
-            # Push student attendance
+            # PUSH STUDENT TO DB — FIXED!!
             # ----------------------------------------------
             attendance_collection.update_one(
-                {"_id": ObjectId(log_id)},
+                {"_id": log_id},
                 {"$push": {
                     "students": {
                         "student_id": student_data["student_id"],
@@ -606,15 +613,15 @@ def multi_face_recognize():
                 }}
             )
 
-            # Store in memory
-            SESSION_LOGGED_STUDENTS[class_id][user_id] = {"status": status}
+            # store to session
+            SESSION_LOGGED_STUDENTS[key][user_id] = {"status": status}
 
-            # Add to response
+            # add to response
             results.append({
                 **student_data,
                 "status": status,
                 "time": now_nice,
-                "bbox": face.get("bbox"),
+                "bbox": face.get("bbox")
             })
 
         # =====================================================
@@ -622,14 +629,14 @@ def multi_face_recognize():
         # =====================================================
         duration = time.time() - start_time
         current_app.logger.info(
-            f"✅ multi-recognize: {len(results)} logged, inst={SESSION_INSTRUCTOR_DETECTED[class_id]}, {duration:.2f}s"
+            f"✅ multi-recognize: {len(results)} logged, inst={SESSION_INSTRUCTOR_DETECTED[key]}, {duration:.2f}s"
         )
 
         return jsonify({
             "success": True,
             "logged": results,
             "count": len(results),
-            "instructor_detected": SESSION_INSTRUCTOR_DETECTED[class_id],
+            "instructor_detected": SESSION_INSTRUCTOR_DETECTED[key],
             "instructor_id": instructor_id,
             "instructor_first_name": cls.get("instructor_first_name"),
             "instructor_last_name": cls.get("instructor_last_name"),
@@ -638,10 +645,9 @@ def multi_face_recognize():
         }), 200
 
     except Exception as e:
-        current_app.logger.error(
-            f"❌ /multi-recognize error: {traceback.format_exc()}"
-        )
+        current_app.logger.error(f"❌ /multi-recognize error: {traceback.format_exc()}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
 
     
 
