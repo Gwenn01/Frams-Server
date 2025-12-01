@@ -97,7 +97,21 @@ def login_instructor():
 @jwt_required()
 def get_classes_by_instructor(instructor_id):
     try:
-        classes = list(classes_collection.find({"instructor_id": instructor_id}))
+        # 🔍 Fetch ACTIVE semester document
+        active_semester = db["semesters"].find_one({"is_active": True})
+
+        if not active_semester:
+            return jsonify({"error": "No active semester configured"}), 500
+
+        semester_name = active_semester.get("semester_name")
+        school_year = active_semester.get("school_year")
+
+        classes = list(classes_collection.find({
+            "instructor_id": instructor_id,
+            "semester": semester_name,
+            "school_year": school_year
+        }))
+
         results = []
         for cls in classes:
             results.append({
@@ -113,10 +127,12 @@ def get_classes_by_instructor(instructor_id):
                 "is_attendance_active": cls.get("is_attendance_active", False),
                 "active_session_id": str(cls.get("active_session_id")) if cls.get("active_session_id") else None
             })
-        return jsonify(results), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
+        return jsonify(results), 200
+
+    except Exception as e:
+        print("❌ ERROR in get_classes_by_instructor:", e)
+        return jsonify({"error": str(e)}), 500
 
 # -------------------------------------------------
 # 🔹 Assigned Students per Class
