@@ -899,20 +899,33 @@ def create_class():
 
     return jsonify(_serialize_class(cls)), 201
 
-# 🟢 Get all classes (with attendance breakdown)
+# 🟢 Get all classes (filtered by admin program + active semester)
 @admin_bp.route("/api/classes", methods=["GET"])
 @jwt_required()
 def get_all_classes():
     admin_program = _admin_program()
-    classes = list(classes_col.find(
-        {"course": {"$regex": f"^{admin_program}$", "$options": "i"}}
-    ).sort("created_at", -1))
+
+    # 1️⃣ Get active semester
+    active_sem = semesters_col.find_one({"is_active": True})
+    if not active_sem:
+        return jsonify({"error": "No active semester found"}), 400
+
+    active_semester = active_sem["semester_name"]
+    active_school_year = active_sem["school_year"]
+
+    # 2️⃣ Fetch classes only for that semester + SY
+    classes = list(classes_col.find({
+        "course": {"$regex": f"^{admin_program}$", "$options": "i"},
+        "semester": active_semester,
+        "school_year": active_school_year
+    }).sort("created_at", -1))
+
+    # 3️⃣ Compute attendance stats (unchanged from your code)
     output = []
 
     for cls in classes:
         class_id = str(cls["_id"])
 
-        # 🔹 Compute attendance stats
         stats = list(attendance_logs_col.aggregate([
             {"$match": {"class_id": class_id}},
             {"$unwind": "$students"},
@@ -938,7 +951,6 @@ def get_all_classes():
         output.append(cls_data)
 
     return jsonify(output), 200
-
 
 # 🟢 Get single class
 @admin_bp.route("/api/classes/<id>", methods=["GET"])
