@@ -491,16 +491,17 @@ def has_logged():
 def get_all_logs_grouped():
     try:
         class_id = request.args.get("class_id")
-        instructor_id = request.args.get("instructor_id")
         date_start = request.args.get("start")
         date_end = request.args.get("end")
 
-        # --- FILTERS ---
+        # --- FILTERS (CLEANED) ---
         query = {}
+
+        # Always filter by class_id
         if class_id:
             query["class_id"] = str(class_id)
-        if instructor_id:
-            query["instructor_id"] = instructor_id
+
+        # Optional date filter
         if date_start and date_end:
             query["date"] = {"$gte": date_start, "$lte": date_end}
 
@@ -526,19 +527,23 @@ def get_all_logs_grouped():
             log["_id"] = str(log["_id"])
             grouped[date]["logs"].append(log)
 
+            # Merge deduped students
             for s in log.get("students", []):
                 sid = s.get("student_id")
                 if sid:
                     grouped[date]["unique_students"][sid] = s
 
-        final_output = []
-        for date, info in grouped.items():
-            final_output.append({
+        # --- FINAL FORMAT ---
+        final_output = [
+            {
                 "date": date,
                 "logs": info["logs"],
                 "students": list(info["unique_students"].values())
-            })
+            }
+            for date, info in grouped.items()
+        ]
 
+        # Sort newest → oldest
         final_output.sort(key=lambda x: x["date"], reverse=True)
 
         return jsonify({"success": True, "logs": final_output}), 200
