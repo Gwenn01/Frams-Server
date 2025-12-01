@@ -678,21 +678,28 @@ def update_single_semester():
                 return "2nd Sem"
             if "summer" in name:
                 return "Summer"
-            return name
+            return name.title()
 
         normalized_semester = normalize_semester(data["semester_name"])
 
-        # Auto compute school year
-        start_year = int(str(data["start_date"])[0:4])
-        school_year = f"{start_year}-{start_year + 1}"
+        start_year = int(data["start_date"][0:4])
+        start_month = int(data["start_date"][5:7])
 
+        if start_month <= 7:
+            school_year = f"{start_year - 1}-{start_year}"
+        else:
+            school_year = f"{start_year}-{start_year + 1}"
+
+        # Build update document
         update_data = {
             "semester_name": normalized_semester,
             "school_year": school_year,
             "start_date": data["start_date"],
             "end_date": data["end_date"],
+            "is_active": True,  # keep active always for now
         }
 
+        # Update the only semester document
         db.semesters.update_one({}, {"$set": update_data})
 
         sem = db.semesters.find_one()
