@@ -490,24 +490,27 @@ def has_logged():
 @attendance_bp.route("/logs", methods=["GET"])
 def get_all_logs_grouped():
     try:
-        class_id = request.args.get("class_id")   # optional
+        class_id = request.args.get("class_id")
+        instructor_id = request.args.get("instructor_id")
         date_start = request.args.get("start")
         date_end = request.args.get("end")
 
+        # --- FILTERS ---
         query = {}
-
-        # Optional filters
         if class_id:
             query["class_id"] = str(class_id)
-
+        if instructor_id:
+            query["instructor_id"] = instructor_id
         if date_start and date_end:
             query["date"] = {"$gte": date_start, "$lte": date_end}
 
-        # 🔥 Fetch everything from attendance_logs
+        print("🔍 LOG QUERY:", query)
+
+        # Fetch logs
         raw_logs = list(attendance_logs_col.find(query))
 
+        # --- GROUPING LOGIC ---
         grouped = {}
-
         for log in raw_logs:
             date = log.get("date")
             if not date:
@@ -516,44 +519,34 @@ def get_all_logs_grouped():
             if date not in grouped:
                 grouped[date] = {
                     "date": date,
-                    "logs": [],            # full attendance_logs documents
-                    "students": [],        # all students combined
-                    "unique_students": {}  # dedupe
+                    "logs": [],
+                    "unique_students": {}
                 }
 
-            # Convert _id to string
             log["_id"] = str(log["_id"])
-
-            # 🔥 Append the FULL DOCUMENT (no trimming)
             grouped[date]["logs"].append(log)
 
-            # Collect students (dedupe by student_id)
             for s in log.get("students", []):
                 sid = s.get("student_id")
                 if sid:
                     grouped[date]["unique_students"][sid] = s
 
-        # Final formatting
-        result = []
-        for date, entry in grouped.items():
-            result.append({
+        final_output = []
+        for date, info in grouped.items():
+            final_output.append({
                 "date": date,
-                "logs": entry["logs"],                      # FULL documents
-                "students": list(entry["unique_students"].values())  # deduped students
+                "logs": info["logs"],
+                "students": list(info["unique_students"].values())
             })
 
-        # Sort by date DESC
-        result.sort(key=lambda x: x["date"], reverse=True)
+        final_output.sort(key=lambda x: x["date"], reverse=True)
 
-        return jsonify({
-            "success": True,
-            "logs": result
-        }), 200
+        return jsonify({"success": True, "logs": final_output}), 200
 
     except Exception:
-        import traceback
         print("❌ Error in /logs:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
+
 
 # ✅ Bulk mark ABSENT for students (manual)
 @attendance_bp.route("/mark-absent", methods=["POST"])
