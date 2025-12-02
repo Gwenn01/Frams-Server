@@ -193,6 +193,13 @@ def attendance_report(class_id):
         "records": results
     }), 200
 
+@instructor_bp.route("/<string:instructor_id>/all-classes", methods=["GET"])
+@jwt_required()
+def get_all_instructor_classes(instructor_id):
+    classes = list(classes_collection.find({"instructor_id": instructor_id}))
+    for c in classes:
+        c["_id"] = str(c["_id"])
+    return jsonify(classes), 200
 
 # -------------------------------------------------
 # 🔹 Attendance Report (all classes)
