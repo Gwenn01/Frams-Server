@@ -263,7 +263,18 @@ def list_all_class_assignments():
 @jwt_required()
 def instructor_overview(instructor_id):
     try:
-        classes = list(classes_collection.find({"instructor_id": instructor_id}))
+        active = db["semesters"].find_one({"is_active": True})
+        if not active:
+            return jsonify({"error": "No active semester"}), 500
+
+        sem_name = active["semester_name"]
+        sy = active["school_year"]
+
+        classes = list(classes_collection.find({
+            "instructor_id": instructor_id,
+            "semester": sem_name,
+            "school_year": sy
+        }))
 
         total_classes = len(classes)
         total_students = sum(len(cls.get("students", [])) for cls in classes)
@@ -290,9 +301,8 @@ def instructor_overview(instructor_id):
             late_count = agg[0]["late"]
             absent_count = agg[0]["absent"]
         else:
-            total_records, present_count, late_count, absent_count = 0, 0, 0, 0
+            total_records = present_count = late_count = absent_count = 0
 
-        # ✅ Attendance rate counts Present + Late as attended
         attendance_rate = (
             round(((present_count + late_count) / total_records) * 100, 2)
             if total_records else 0
@@ -308,6 +318,7 @@ def instructor_overview(instructor_id):
             "absent": absent_count,
             "totalRecords": total_records
         }), 200
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -357,7 +368,19 @@ def instructor_attendance_trend(instructor_id):
 @jwt_required()
 def instructor_class_summary(instructor_id):
     try:
-        classes = list(classes_collection.find({"instructor_id": instructor_id}))
+        active = db["semesters"].find_one({"is_active": True})
+        if not active:
+            return jsonify([]), 200
+
+        sem_name = active["semester_name"]
+        sy = active["school_year"]
+
+        classes = list(classes_collection.find({
+            "instructor_id": instructor_id,
+            "semester": sem_name,
+            "school_year": sy
+        }))
+
         results = []
         for cls in classes:
             results.append({
@@ -373,6 +396,7 @@ def instructor_class_summary(instructor_id):
                 "is_attendance_active": cls.get("is_attendance_active", False),
             })
         return jsonify(results), 200
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
