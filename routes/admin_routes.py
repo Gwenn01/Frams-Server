@@ -1362,7 +1362,11 @@ def preview_class_pdf():
         for sid in student_ids:
             stu = students_col.find_one({"student_id": sid})
             if stu:
-                valid_students.append(sid)
+                valid_students.append({
+                    "student_id": sid,
+                    "first_name": stu.get("First_Name", "").strip(),
+                    "last_name": stu.get("Last_Name", "").strip()
+                })
             else:
                 skipped_students.append(sid)
 
