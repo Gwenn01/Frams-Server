@@ -9,6 +9,7 @@ from config.db_config import db
 from models.admin_model import find_admin_by_user_id, find_admin_by_email, create_admin
 from flask_jwt_extended import jwt_required, get_jwt, create_access_token
 
+
 admin_bp = Blueprint("admin_bp", __name__)
 secret_key = os.getenv("JWT_SECRET", os.getenv("JWT_SECRET_KEY", "yoursecretkey"))
 
@@ -79,9 +80,6 @@ def _admin_program():
     claims = get_jwt()
     return claims.get("program", "").upper()
 
-def _admin_id():
-    return get_jwt().get("sub") 
-
 # =========================================
 # ✅ Auth: Register (after frontend OTP)
 # =========================================
@@ -91,10 +89,10 @@ def register_admin():
 
     first_name = (data.get("first_name") or "").strip()
     last_name = (data.get("last_name") or "").strip()
-    user_id = (data.get("user_id") or "").strip()  # admin_id
+    user_id = (data.get("user_id") or "").strip()
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
-    program = (data.get("program") or "").strip().upper()
+    program = (data.get("program") or "").strip().upper()  # ✅ Added
 
     # -------------------------------
     # Validate required fields
@@ -124,22 +122,16 @@ def register_admin():
         "first_name": first_name,
         "last_name": last_name,
         "full_name": full_name,
-        "user_id": user_id,  # ⭐ admin_id stored as user_id
+        "user_id": user_id,
         "email": email,
         "password": hashed_password,
-        "program": program,
+        "program": program,  # ✅ Added field
         "created_at": datetime.utcnow(),
     }
 
     create_admin(admin_data)
 
-    return jsonify({
-        "message": f"Admin for {program} registered successfully",
-        "admin_id": user_id,
-        "program": program
-    }), 201
-
-
+    return jsonify({"message": f"Admin for {program} registered successfully"}), 201
 
 # =========================================
 # ✅ Auth: Login
@@ -157,11 +149,11 @@ def login_admin():
     if not check_password_hash(admin["password"], password):
         return jsonify({"error": "Incorrect password"}), 401
 
-    program = admin.get("program")  # BSINFOTECH or BSCS
+    program = admin.get("program")  # Example: BSINFOTECH or BSCS
 
-    # ✔ FIX: store user_id in `sub`, program in claims
+    # ✅ FIXED: move program to additional_claims
     token = create_access_token(
-        identity=user_id,   # becomes claims["sub"]
+        identity=user_id,
         additional_claims={
             "role": "admin",
             "program": program
@@ -169,18 +161,18 @@ def login_admin():
         expires_delta=timedelta(hours=12),
     )
 
-    return jsonify({
-        "token": token,
-        "message": "Login successful",
-        "admin": {
-            "user_id": admin.get("user_id"),
-            "first_name": admin.get("first_name"),
-            "last_name": admin.get("last_name"),
-            "program": program,
-        },
-    }), 200
-
-
+    return jsonify(
+        {
+            "token": token,
+            "message": "Login successful",
+            "admin": {
+                "user_id": admin.get("user_id"),
+                "first_name": admin.get("first_name"),
+                "last_name": admin.get("last_name"),
+                "program": program,
+            },
+        }
+    ), 200
 
 # ==============================
 # ✅ Admin Profile (for Student Register Page)
@@ -192,10 +184,10 @@ def get_admin_profile():
     Returns the logged-in admin's profile (used by StudentRegisterFaceComponent.jsx).
     """
     claims = get_jwt()
-    admin_id = claims.get("sub")      # stored as identity during login
-    program = claims.get("program")   # stored in JWT claims
+    admin_id = claims.get("sub")  # stored as identity during login
+    program = claims.get("program")
 
-    # 📌 Find admin record
+    # 🧩 Try to find the admin record in DB
     admin_doc = admins_col.find_one({"user_id": admin_id})
     if not admin_doc:
         return jsonify({"error": "Admin not found"}), 404
@@ -205,53 +197,60 @@ def get_admin_profile():
         "first_name": admin_doc.get("first_name"),
         "last_name": admin_doc.get("last_name"),
         "email": admin_doc.get("email"),
-        "program": admin_doc.get("program") or program or "Unknown Program",
-        "admin_id": admin_id
+        "program": admin_doc.get("program", program or "Unknown Program")
     }), 200
 
 # ==============================
 # ✅ Admin Overview Endpoints
 # ==============================
 @admin_bp.route("/api/admin/overview/stats", methods=["GET"])
-@jwt_required()
 def get_stats():
-    claims = get_jwt()
-    admin_id = claims.get("sub")       # ADMIN-INFOTECH
-    program = claims.get("program")    # BSINFOTECH (for display only)
-
+    program = request.args.get("program")  # e.g. BSINFOTECH / BSCS
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
-    attendance_today = attendance_logs_col.count_documents({
-        "created_by": admin_id,
-        "date": today
-    })
+    # 🧩 Attendance logs filtered by course (handles both 'course' and 'Course')
+    attendance_today = 0
+    query = {"date": today}
+    if program:
+        query["$or"] = [
+            {"course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"Course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
+            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}}
+        ]
 
-    total_students = students_col.count_documents({
-        "created_by": admin_id
-    })
+    for log in attendance_logs_col.find(query):
+        attendance_today += len(log.get("students", []))
 
-    total_classes = classes_col.count_documents({
-        "created_by": admin_id
-    })
+    # 🧩 Students and Classes filtered by course (case-insensitive)
+    student_filter = {"$or": [
+        {"course": {"$regex": f"^{program}$", "$options": "i"}},
+        {"Course": {"$regex": f"^{program}$", "$options": "i"}}
+    ]} if program else {}
 
+    class_filter = {"$or": [
+        {"course": {"$regex": f"^{program}$", "$options": "i"}},
+        {"Course": {"$regex": f"^{program}$", "$options": "i"}}
+    ]} if program else {}
+
+    # 🧩 Instructors — fetch ALL instructors (not filtered by program)
     total_instructors = instructors_col.count_documents({})
 
-    return jsonify({
-        "admin_id": admin_id,
-        "program": program,
-        "total_students": total_students,
-        "total_instructors": total_instructors,
-        "total_classes": total_classes,
-        "attendance_today": attendance_today,
-    }), 200
+    # ✅ Return compiled overview
+    return jsonify(
+        {
+            "total_students": students_col.count_documents(student_filter),
+            "total_instructors": total_instructors,
+            "total_classes": classes_col.count_documents(class_filter),
+            "attendance_today": attendance_today,
+        }
+    )
 
 @admin_bp.route("/api/admin/overview/attendance-distribution", methods=["GET"])
-@jwt_required()
 def attendance_distribution():
-    claims = get_jwt()
-    admin_id = claims.get("sub")
-    program = claims.get("program")
+    program = request.args.get("program")
 
+    # Match logs by course at root or inside students array
     match_stage = {"$match": {
         "$or": [
             {"course": {"$regex": f"^{program}$", "$options": "i"}},
@@ -271,10 +270,10 @@ def attendance_distribution():
     ]
 
     result = list(attendance_logs_col.aggregate(pipeline))
-    present = late = absent = 0
 
+    present = late = absent = 0
     for r in result:
-        status = (r["_id"] or "").lower()
+        status = (r["_id"] or "").strip().lower()
         if status == "present":
             present = r["count"]
         elif status == "late":
@@ -282,22 +281,11 @@ def attendance_distribution():
         elif status == "absent":
             absent = r["count"]
 
-    return jsonify({
-        "admin_id": admin_id,
-        "program": program,
-        "present": present,
-        "late": late,
-        "absent": absent
-    }), 200
-
+    return jsonify({"present": present, "late": late, "absent": absent})
 
 @admin_bp.route("/api/admin/overview/attendance-trend", methods=["GET"])
-@jwt_required()
 def attendance_trend():
-    claims = get_jwt()
-    admin_id = claims.get("sub")
-    program = claims.get("program")
-
+    program = request.args.get("program")
     days = int(request.args.get("days", 7))
     end_date = datetime.utcnow().date()
     trend = []
@@ -306,6 +294,7 @@ def attendance_trend():
         d = end_date - timedelta(days=(days - 1 - i))
         d_str = d.strftime("%Y-%m-%d")
 
+        # Match by date and program at root or inside students
         query = {"date": d_str}
         if program:
             query["$or"] = [
@@ -318,31 +307,23 @@ def attendance_trend():
         day_total = 0
         for log in attendance_logs_col.find(query):
             day_total += len(log.get("students", []))
-
         trend.append({"date": d_str, "count": day_total})
 
-    return jsonify({
-        "admin_id": admin_id,
-        "program": program,
-        "trend": trend
-    }), 200
-
+    return jsonify(trend)
 
 @admin_bp.route("/api/admin/overview/recent-logs", methods=["GET"])
-@jwt_required()
 def recent_logs():
-    claims = get_jwt()
-    admin_id = claims.get("sub")
-    program = claims.get("program")
+    program = request.args.get("program")
     limit = int(request.args.get("limit", 5))
 
+    # Match both root and nested course fields
     query = {}
     if program:
         query["$or"] = [
             {"course": {"$regex": f"^{program}$", "$options": "i"}},
             {"Course": {"$regex": f"^{program}$", "$options": "i"}},
             {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
-            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}}
+            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}},
         ]
 
     docs = list(attendance_logs_col.find(query).sort("date", -1).limit(20))
@@ -358,52 +339,42 @@ def recent_logs():
         )
 
         for stu in log.get("students", []):
-            flattened.append({
-                "student": {
-                    "first_name": stu.get("first_name") or stu.get("First_Name"),
-                    "last_name": stu.get("last_name") or stu.get("Last_Name"),
-                    "student_id": stu.get("student_id"),
-                },
-                "subject": subject,
-                "status": stu.get("status"),
-                "timestamp": stu.get("time_logged") or log.get("date"),
-            })
+            flattened.append(
+                {
+                    "student": {
+                        "first_name": stu.get("first_name") or stu.get("First_Name"),
+                        "last_name": stu.get("last_name") or stu.get("Last_Name"),
+                        "student_id": stu.get("student_id"),
+                    },
+                    "subject": subject,
+                    "status": stu.get("status"),
+                    "timestamp": stu.get("time_logged") or log.get("date"),
+                }
+            )
 
     flattened.sort(key=lambda x: str(x.get("timestamp") or ""), reverse=True)
-
-    return jsonify({
-        "admin_id": admin_id,
-        "program": program,
-        "logs": flattened[:limit]
-    }), 200
-
+    return jsonify(flattened[:limit])
 
 @admin_bp.route("/api/admin/overview/last-student", methods=["GET"])
-@jwt_required()
 def last_student():
-    claims = get_jwt()
-    admin_id = claims.get("sub")   # current admin
-    program = claims.get("program")
-
-    # 🔥 Only fetch students CREATED BY THIS ADMIN
-    query = {
-        "created_by": admin_id
-    }
+    program = request.args.get("program")
+    query = {"$or": [
+        {"course": {"$regex": f"^{program}$", "$options": "i"}},
+        {"Course": {"$regex": f"^{program}$", "$options": "i"}}
+    ]} if program else {}
 
     student = students_col.find_one(query, sort=[("created_at", -1)])
-
     if not student:
-        return jsonify(None), 200
+        return jsonify(None)
 
-    return jsonify({
-        "admin_id": admin_id,
-        "program": program,
-        "student_id": student.get("student_id"),
-        "first_name": student.get("First_Name") or student.get("first_name"),
-        "last_name": student.get("Last_Name") or student.get("last_name"),
-        "created_at": student.get("created_at")
-    }), 200
-
+    return jsonify(
+        {
+            "student_id": student.get("student_id"),
+            "first_name": student.get("First_Name") or student.get("first_name"),
+            "last_name": student.get("Last_Name") or student.get("last_name"),
+            "created_at": student.get("created_at"),
+        }
+    )
 
 from flask import jsonify, request
 from datetime import datetime, timezone
@@ -419,7 +390,6 @@ from datetime import datetime, timezone
 def get_all_students():
     claims = get_jwt()
     program = claims.get("program")  # ✅ read from claims, not identity
-    creator = _admin_id()
 
     # 🧩 Apply program filter (case-insensitive)
     course_filter = {}
@@ -432,13 +402,7 @@ def get_all_students():
     # 🧩 Fetch students only from that course
     students = list(
         students_col.find(
-            {
-                "created_by": creator,
-                "$or": [
-                    {"Course": {"$regex": f"^{program}$", "$options": "i"}},
-                    {"course": {"$regex": f"^{program}$", "$options": "i"}},
-                ],
-            },
+            course_filter,
             {
                 "_id": 0,
                 "student_id": 1,
@@ -448,7 +412,7 @@ def get_all_students():
                 "Course": 1,
                 "Section": 1,
                 "created_at": 1,
-            }
+            },
         )
     )
 
@@ -509,16 +473,13 @@ def get_all_students():
 def get_student(student_id):
     claims = get_jwt()
     program = claims.get("program")
-    creator = _admin_id()
 
-    query = {
-        "student_id": student_id,
-        "created_by": creator,
-        "$or": [
+    query = {"student_id": student_id}
+    if program:
+        query["$or"] = [
             {"Course": {"$regex": f"^{program}$", "$options": "i"}},
             {"course": {"$regex": f"^{program}$", "$options": "i"}},
-        ],
-    }
+        ]
 
     student = students_col.find_one(query)
     if not student:
@@ -568,35 +529,22 @@ def get_student(student_id):
 
 # 📌 UPDATE STUDENT
 @admin_bp.route("/api/admin/students/<student_id>", methods=["PUT"])
-@jwt_required()
 def update_student(student_id):
-    program = _admin_program()
-    creator = _admin_id()
-
-    student = students_col.find_one({
-        "student_id": student_id,
-        "created_by": creator,    # 🔥 block editing if from another admin
-        "Course": {"$regex": f"^{program}$", "$options": "i"},
-    })
-
-    if not student:
-        return jsonify({"error": "Student not found or not yours to modify"}), 404
-
     data = request.get_json() or {}
     update_data = {}
-
     if "first_name" in data:
         update_data["First_Name"] = data["first_name"]
     if "last_name" in data:
         update_data["Last_Name"] = data["last_name"]
     if "middle_name" in data:
         update_data["Middle_Name"] = data["middle_name"]
+    if "course" in data:
+        update_data["Course"] = data["course"]
     if "section" in data:
         update_data["Section"] = data["section"]
 
-    # ❌ Cannot change Course (restricted by program)
-    if "course" in data and data["course"].upper() != program:
-        return jsonify({"error": "Cannot change student to another program"}), 403
+    if not update_data:
+        return jsonify({"error": "No valid fields provided"}), 400
 
     result = students_col.update_one({"student_id": student_id}, {"$set": update_data})
     if result.matched_count == 0:
@@ -606,27 +554,21 @@ def update_student(student_id):
 
 # 📌 DELETE STUDENT
 @admin_bp.route("/api/admin/students/<student_id>", methods=["DELETE"])
-@jwt_required()
 def delete_student(student_id):
-    program = _admin_program()
-    creator = _admin_id()
-
-    student = students_col.find_one({
-        "student_id": student_id,
-        "created_by": creator,
-        "Course": {"$regex": f"^{program}$", "$options": "i"},
-    })
-
-    if not student:
-        return jsonify({"error": "Student not found or not yours to delete"}), 404
-
+    """Delete a student record and refresh the face embeddings cache."""
     try:
+        # Attempt to delete the student document
         result = students_col.delete_one({"student_id": student_id})
         if result.deleted_count == 0:
             return jsonify({"error": "Student not found"}), 404
 
+        # ✅ Refresh the cached embeddings after deletion
+        print(f"🗑️ Student {student_id} deleted — refreshing face cache...")
+
+        # Import the helper from your face blueprint (same function inside /login)
         from routes.face_routes import refresh_face_cache
-        refresh_face_cache()
+
+        refresh_face_cache()  # Rebuilds CACHED_FACES in memory
 
         return jsonify({
             "message": f"Student {student_id} deleted successfully and cache refreshed."
@@ -634,45 +576,31 @@ def delete_student(student_id):
 
     except Exception as e:
         import traceback
+        print("❌ Error deleting student:", e)
         print(traceback.format_exc())
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
 # ==============================
 # ✅ Subject Management
 # ==============================
 @admin_bp.route("/api/admin/subjects", methods=["GET"])
-@jwt_required()
 def get_subjects():
-    claims = get_jwt()
-    creator = claims.get("sub")
-    admin_program = claims.get("program", "").upper()
-
-    subjects = list(
-        subjects_col.find({
-            "created_by": creator,
-            "course": {"$regex": f"^{admin_program}$", "$options": "i"}
-        }).sort("created_at", -1)
-    )
-
-    return jsonify([_serialize_subject(s) for s in subjects]), 200
+    subjects = list(subjects_col.find().sort("created_at", -1))
+    return jsonify([_serialize_subject(s) for s in subjects])
 
 @admin_bp.route("/api/admin/subjects", methods=["POST"])
-@jwt_required()
 def create_subject():
-    claims = get_jwt()
-    creator = claims.get("sub")
-    admin_program = claims.get("program", "").upper()
-
     data = request.get_json() or {}
-
-    required_fields = ["subject_code", "subject_title", "course", "year_level", "semester"]
-    if not all(data.get(f) for f in required_fields):
+    required_fields = [
+        "subject_code",
+        "subject_title",
+        "course",
+        "year_level",
+        "semester",
+    ]
+    if not all(data.get(field) for field in required_fields):
         return jsonify({"error": "Missing required fields"}), 400
-
-    # 🚫 Prevent admins from creating subjects for other programs
-    if data["course"].upper() != admin_program:
-        return jsonify({"error": "You cannot create subjects for another program"}), 403
 
     subject_doc = {
         "subject_code": data["subject_code"],
@@ -681,17 +609,15 @@ def create_subject():
         "year_level": data["year_level"],
         "semester": data["semester"],
         "created_at": datetime.utcnow(),
-        "created_by": creator
     }
 
     result = subjects_col.insert_one(subject_doc)
     new_subject = subjects_col.find_one({"_id": result.inserted_id})
-    new_subject["_id"] = str(new_subject["_id"])
-
+    if new_subject:
+        new_subject["_id"] = str(new_subject["_id"])
     return jsonify(new_subject), 201
 
 @admin_bp.route("/api/admin/subjects/<id>", methods=["PUT"])
-@jwt_required()
 def update_subject(id):
     data = request.get_json() or {}
     update_data = {}
@@ -705,7 +631,6 @@ def update_subject(id):
     return jsonify({"message": "Subject updated successfully"}), 200
 
 @admin_bp.route("/api/admin/subjects/<id>", methods=["DELETE"])
-@jwt_required()
 def delete_subject(id):
     result = subjects_col.delete_one({"_id": ObjectId(id)})
     if result.deleted_count == 0:
@@ -729,7 +654,6 @@ def get_current_semester():
 
 
 @admin_bp.route("/api/admin/semester", methods=["PUT"])
-@jwt_required()
 def update_single_semester():
     try:
         data = request.get_json() or {}
@@ -786,46 +710,21 @@ def update_single_semester():
 @admin_bp.route("/api/admin/curriculum", methods=["GET"])
 @jwt_required()
 def get_curriculums():
-    """Return all distinct curriculum values (filtered by admin program + created_by)."""
+    """Return all distinct curriculum values from subjects collection."""
     try:
-        claims = get_jwt()
-        admin_program = claims.get("program", "").upper()
-        creator = claims.get("sub")
+        # Fetch unique curriculum values
+        curr_list = subjects_col.distinct("curriculum")
 
-        if not admin_program:
-            return jsonify({"error": "Admin program missing from token"}), 400
-
-        if not creator:
-            return jsonify({"error": "Admin identity missing from token"}), 400
-
-        # ---------------------------------------------
-        #  FILTER: Only curriculums created by this admin AND for this program
-        # ---------------------------------------------
-        query = {
-            "created_by": creator,
-            "$or": [
-                {"course": {"$regex": f"^{admin_program}$", "$options": "i"}},
-                {"Course": {"$regex": f"^{admin_program}$", "$options": "i"}}
-            ]
-        }
-
-        # ---------------------------------------------
-        #  FETCH DISTINCT CURRICULUM VALUES
-        # ---------------------------------------------
-        curr_list = subjects_col.distinct("curriculum", query)
-
-        # Clean + sort
+        # Clean and sort
         curr_list = sorted(list({str(c).strip() for c in curr_list if c}))
 
         return jsonify({"curriculums": curr_list}), 200
 
     except Exception as e:
-        print("❌ Error in GET /api/admin/curriculum:", e)
+        print("❌ Error in GET /curriculum:", e)
         return jsonify({"error": "Failed to load curriculum list"}), 500
 
-
 @admin_bp.route("/api/admin/semester/activate", methods=["PUT"])
-@jwt_required()
 def activate_single_semester():
     try:
         sem = db.semesters.find_one()
@@ -903,7 +802,6 @@ def get_active_subjects():
 
         subjects = list(
             db.subjects.find({
-                "created_by": claims.get("sub"),
                 "semester": normalized_sem,
                 "course": {"$regex": f"^{admin_program}$", "$options": "i"}
             }).sort("year_level", 1)
@@ -940,7 +838,6 @@ from io import BytesIO
 @jwt_required()
 def create_class():
     admin_program = _admin_program() 
-    creator = _admin_id()
 
     data = request.get_json() or {}
 
@@ -995,7 +892,6 @@ def create_class():
         "attendance_start_time": None,
         "attendance_end_time": None,
         "created_at": datetime.utcnow(),
-        "created_by": creator
     }
 
     result = classes_col.insert_one(new_class)
@@ -1008,7 +904,6 @@ def create_class():
 @jwt_required()
 def get_all_classes():
     admin_program = _admin_program()
-    creator = _admin_id()
 
     # 1️⃣ Get active semester
     active_sem = semesters_col.find_one({"is_active": True})
@@ -1020,7 +915,6 @@ def get_all_classes():
 
     # 2️⃣ Fetch classes only for that semester + SY
     classes = list(classes_col.find({
-        "created_by": creator,
         "course": {"$regex": f"^{admin_program}$", "$options": "i"},
         "semester": active_semester,
         "school_year": active_school_year
@@ -1063,7 +957,6 @@ def get_all_classes():
 @jwt_required()
 def get_class(id):
     admin_program = _admin_program()
-    creator = _admin_id()
 
     # Validate ObjectId
     try:
@@ -1074,10 +967,7 @@ def get_class(id):
     # Not found
     if not cls:
         return jsonify({"error": "Class not found"}), 404
-    
-    if cls.get("created_by") != creator:
-        return jsonify({"error": "Forbidden: You cannot access classes created by another admin"}), 403
-    
+
     # 🚫 Block access if class belongs to another program
     if cls.get("course", "").upper() != admin_program:
         return jsonify({"error": "You are not allowed to access classes from another program"}), 403
@@ -1119,16 +1009,12 @@ def get_class(id):
 def update_class(id):
     admin_program = _admin_program()
     data = request.get_json() or {}
-    creator = _admin_id()
 
     # 🧩 Fetch class first
     cls = classes_col.find_one({"_id": ObjectId(id)})
 
     if not cls:
         return jsonify({"error": "Class not found"}), 404
-    
-    if cls.get("created_by") != creator:
-        return jsonify({"error": "Forbidden: You cannot edit classes created by another admin"}), 403
 
     # ❗ Prevent editing classes from another program
     if cls["course"].upper() != admin_program:
@@ -1186,10 +1072,6 @@ def upload_students_to_class(class_id):
     cls = classes_col.find_one({"_id": ObjectId(class_id)})
     if not cls:
         return jsonify({"error": "Class not found"}), 404
-    
-    if cls.get("created_by") != get_jwt().get("sub"):
-        return jsonify({"error": "Forbidden — You cannot upload students to another admin’s class"}), 403
-
 
     # Prevent admin from editing classes outside their program
     if cls["course"].upper() != admin_program:
@@ -1256,10 +1138,7 @@ def upload_students_to_class(class_id):
             last = str(row["Last Name"]).strip()
 
             # Validate student exists
-            stu = students_col.find_one({
-                "student_id": sid,
-                "created_by": creator
-            })
+            stu = students_col.find_one({"student_id": sid})
             if not stu:
                 return jsonify({"error": f"Student {sid} not found in database"}), 400
 
@@ -1312,9 +1191,6 @@ def get_students_by_class(class_id):
 
     if not cls:
         return jsonify({"error": "Class not found"}), 404
-    
-    if cls.get("created_by") != get_jwt().get("sub"):
-        return jsonify({"error": "Forbidden: Not your class"}), 403
 
     # ❗ Prevent admin from accessing another program’s classes
     if cls["course"].upper() != admin_program:
@@ -1335,10 +1211,6 @@ def delete_class(id):
 
     if not cls:
         return jsonify({"error": "Class not found"}), 404
-    
-    if cls.get("created_by") != get_jwt().get("sub"):
-        return jsonify({"error": "Forbidden: You cannot delete another admin's class"}), 403
-
 
     # ❗ Prevent admin from deleting classes from another program
     if cls["course"].upper() != admin_program:
@@ -1354,13 +1226,11 @@ def delete_class(id):
 @jwt_required()
 def get_free_classes():
     admin_program = get_jwt().get("program", "").upper()
-    creator = _admin_id()
 
     if not admin_program:
         return jsonify([]), 200
 
     free_classes = list(classes_col.find({
-        "created_by": creator,
         "course": {"$regex": f"^{admin_program}$", "$options": "i"},
         "$or": [
             {"instructor_id": {"$exists": False}},
@@ -1488,21 +1358,13 @@ def get_classes_by_instructor(instructor_id):
     return jsonify(serialized), 200
 
 # ==============================
-# ✅ Attendance Logs (Admin) — PATCHED
+# ✅ Attendance Logs (Admin)
 # ==============================
 @admin_bp.route("/api/attendance/logs", methods=["GET"])
-@jwt_required()
 def get_attendance_logs():
-    admin_program = get_jwt().get("program", "").upper()
-    creator = get_jwt().get("sub")
-
     logs = []
 
-    cursor = attendance_logs_col.find({
-        "course": {"$regex": f"^{admin_program}$", "$options": "i"},
-        "created_by": creator    
-    }).sort("date", -1)
-
+    cursor = attendance_logs_col.find().sort("date", -1)
     for doc in cursor:
         class_id = str(doc.get("class_id"))
         subject_code = doc.get("subject_code", "")
@@ -1510,7 +1372,7 @@ def get_attendance_logs():
         instructor_first_name = doc.get("instructor_first_name", "")
         instructor_last_name = doc.get("instructor_last_name", "")
         section = doc.get("section", "")
-        course = doc.get("course", "")
+        course = doc.get("course", "") 
         date = doc.get("date")
 
         # Flatten each student log
@@ -1526,7 +1388,7 @@ def get_attendance_logs():
                 "subject_title": subject_title,
                 "instructor_name": f"{instructor_first_name} {instructor_last_name}".strip(),
                 "section": section,
-                "course": course,
+                "course": course,  
                 "class_id": class_id,
             })
 
