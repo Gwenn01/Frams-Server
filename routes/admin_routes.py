@@ -225,6 +225,7 @@ def get_stats():
     # 🟢 ATTENDANCE TODAY (program + created_by)
     # ================================
     attendance_today = attendance_logs_col.count_documents({
+        "created_by": admin_id,
         "date": today,
         "course": {"$regex": f"^{program}$", "$options": "i"},
         "created_by": admin_id
@@ -234,6 +235,7 @@ def get_stats():
     # 🟢 STUDENTS (program + created_by)
     # ================================
     student_filter = {
+        "created_by": admin_id,
         "course": {"$regex": f"^{program}$", "$options": "i"},
         "created_by": admin_id
     }
@@ -242,6 +244,7 @@ def get_stats():
     # 🟢 CLASSES (program + created_by)
     # ================================
     class_filter = {
+        "created_by": admin_id,
         "course": {"$regex": f"^{program}$", "$options": "i"},
         "created_by": admin_id
     }
@@ -404,16 +407,16 @@ def recent_logs():
 @jwt_required()
 def last_student():
     claims = get_jwt()
-    admin_id = claims.get("sub")
+    admin_id = claims.get("sub")   # current admin
     program = claims.get("program")
 
-    query = {"$or": [
-        {"created_by": admin_id},
-        {"course": {"$regex": f"^{program}$", "$options": "i"}},
-        {"Course": {"$regex": f"^{program}$", "$options": "i"}}
-    ]} if program else {}
+    # 🔥 Only fetch students CREATED BY THIS ADMIN
+    query = {
+        "created_by": admin_id
+    }
 
     student = students_col.find_one(query, sort=[("created_at", -1)])
+
     if not student:
         return jsonify(None), 200
 
@@ -425,6 +428,7 @@ def last_student():
         "last_name": student.get("Last_Name") or student.get("last_name"),
         "created_at": student.get("created_at")
     }), 200
+
 
 from flask import jsonify, request
 from datetime import datetime, timezone
