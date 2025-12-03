@@ -1066,36 +1066,37 @@ def upload_students_to_class(class_id):
     import pdfplumber
     from io import BytesIO
 
-    # ============================================
-    # 1️⃣ Restrict by Admin Program
-    # ============================================
-    admin = get_jwt()
-    admin_program = admin.get("program", "").upper()
-
-    cls = classes_col.find_one({"_id": ObjectId(class_id)})
-    if not cls:
-        return jsonify({"error": "Class not found"}), 404
-
-    if cls["course"].upper() != admin_program:
-        return jsonify({"error": "Forbidden — You cannot upload students to another program's class"}), 403
-
-    # ============================================
-    # 2️⃣ Read File
-    # ============================================
-    file = request.files.get("file")
-    if not file:
-        return jsonify({"error": "No file uploaded"}), 400
-
     try:
+        # ============================================
+        # 1️⃣ Validate Admin + Class Access
+        # ============================================
+        admin = get_jwt()
+        admin_program = admin.get("program", "").upper()
+
+        cls = classes_col.find_one({"_id": ObjectId(class_id)})
+        if not cls:
+            return jsonify({"error": "Class not found"}), 404
+
+        if cls["course"].upper() != admin_program:
+            return jsonify({
+                "error": "Forbidden — You cannot upload students to another program's class"
+            }), 403
+
+        # ============================================
+        # 2️⃣ Read Uploaded File
+        # ============================================
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "No file uploaded"}), 400
+
         file_bytes = BytesIO(file.read())
 
         # ============================================
-        # 3️⃣ Extract TEXT from PDF (MULTI-PAGE SAFE)
+        # 3️⃣ Extract ALL TEXT (Multi-page Safe)
         # ============================================
         with pdfplumber.open(file_bytes) as pdf:
             full_text = "\n".join([
-                page.extract_text() or ""   # avoid None
-                for page in pdf.pages
+                page.extract_text() or "" for page in pdf.pages
             ])
 
         lines = full_text.split("\n")
@@ -1104,9 +1105,7 @@ def upload_students_to_class(class_id):
         # 4️⃣ Extract School Year + Semester
         # ==========================================================
         header_line = next(line for line in lines if "Class List (" in line)
-
-        match = re.search(r"\((.*?)\)", header_line)
-        inside = match.group(1)
+        inside = re.search(r"\((.*?)\)", header_line).group(1)
 
         school_year, semester_raw = [x.strip() for x in inside.split("/")]
 
@@ -1139,30 +1138,52 @@ def upload_students_to_class(class_id):
         instructor_id = instructor_doc["instructor_id"]
 
         # ==========================================================
-        # 6️⃣ Extract Course + Section + Subject Code
+        # 6️⃣ Extract CLASS CODE (Class: A174)
         # ==========================================================
-        course_line = next(line for line in lines if ":: SA" in line)
-        parts = [p.strip() for p in course_line.split("::")]
+        class_code = None
+        for line in lines:
+            if "Class:" in line:
+                parts = line.split(":")
+                if len(parts) > 1:
+                    class_code = parts[1].strip()
+                break
 
-        course_section = parts[0]
-        subject_code = parts[1]
+        # ==========================================================
+        # 7️⃣ Extract Course + Section (BSINFOTECH 4C)
+        # ==========================================================
+        # Pattern detects formats like:
+        # BSINFOTECH 4C, BSIT 1A, BSCPE 3B, etc.
+        course_section = None
+        for line in lines:
+            if re.search(r"[A-Za-z]+[A-Za-z]*\s+\d+[A-Za-z]$", line.strip()):
+                course_section = line.strip()
+                break
 
-        # Clean spacing
-        clean_cs = " ".join(course_section.split())
+        if not course_section:
+            return jsonify({"error": "Unable to extract course & section"}), 400
 
-        match = re.match(r"([A-Za-z]+)\s+(\S+)", clean_cs)
-        if not match:
-            return jsonify({"error": f"Cannot parse course/section from '{course_section}'"}), 400
+        # Last space splits course vs section
+        course, section = course_section.rsplit(" ", 1)
 
-        course = match.group(1)
-        section = match.group(2)
-
-        # Check program
+        # Course restriction
         if course.upper() != admin_program:
             return jsonify({"error": f"Course '{course}' does NOT match your program '{admin_program}'"}), 403
 
         # ==========================================================
-        # 7️⃣ Get Subject Info from DB
+        # 8️⃣ Extract Subject Code (any AAA 101 pattern)
+        # ==========================================================
+        subject_code = None
+        for line in lines:
+            m = re.search(r"[A-Z]{1,}\s?\d{2,3}", line)
+            if m:
+                subject_code = m.group(0)
+                break
+
+        if not subject_code:
+            return jsonify({"error": "Unable to extract subject code"}), 400
+
+        # ==========================================================
+        # 9️⃣ Get Subject Info from DB
         # ==========================================================
         subject_doc = subjects_col.find_one({"subject_code": subject_code})
         if not subject_doc:
@@ -1172,7 +1193,7 @@ def upload_students_to_class(class_id):
         year_level = subject_doc["year_level"]
 
         # ==========================================================
-        # 8️⃣ Extract Student IDs (MULTI-PAGE)
+        # 🔟 Extract Student IDs (multi-page)
         # ==========================================================
         student_ids = re.findall(r"\b\d{2}-\d-\d-\d{4}\b", full_text)
 
@@ -1180,30 +1201,26 @@ def upload_students_to_class(class_id):
             return jsonify({"error": "No student IDs found in PDF"}), 400
 
         students_list = []
-
         for sid in student_ids:
             stu = students_col.find_one({"student_id": sid})
-
             if not stu:
                 return jsonify({"error": f"Student {sid} not found"}), 400
-
-            final_course = stu.get("Course") or course
-            final_section = stu.get("Section") or section
 
             students_list.append({
                 "student_id": sid,
                 "first_name": stu.get("First_Name", "").strip(),
                 "last_name": stu.get("Last_Name", "").strip(),
-                "course": final_course,
-                "section": final_section
+                "course": stu.get("Course") or course,
+                "section": stu.get("Section") or section
             })
 
         # ==========================================================
-        # 🔟 UPDATE CLASS DOCUMENT (NO SCHEDULE INCLUDED)
+        # 🔥 11️⃣ UPDATE CLASS (Schedule removed)
         # ==========================================================
         classes_col.update_one(
             {"_id": ObjectId(class_id)},
             {"$set": {
+                "class_code": class_code,
                 "subject_code": subject_code,
                 "subject_title": subject_title,
                 "course": course,
@@ -1215,19 +1232,20 @@ def upload_students_to_class(class_id):
                 "instructor_first_name": instructor_first_name,
                 "instructor_last_name": instructor_last_name,
                 "students": students_list,
-                "schedule_blocks": []   # 🔥 empty, no auto-parsing
+                "schedule_blocks": []
             }}
         )
 
         return jsonify({
             "message": f"{len(students_list)} students uploaded successfully",
+            "class_code": class_code,
             "subject_code": subject_code,
             "subject_title": subject_title,
             "course": course,
             "section": section,
             "school_year": school_year,
             "semester": semester,
-            "instructor": f"{instructor_first_name} {instructor_last_name}",
+            "instructor": f"{instructor_first_name} {instructor_last_name}"
         }), 200
 
     except Exception as e:
@@ -1255,14 +1273,13 @@ def preview_class_pdf():
         # ========================================
         with pdfplumber.open(file_bytes) as pdf:
             full_text = "\n".join([
-                page.extract_text() or ""
-                for page in pdf.pages
+                page.extract_text() or "" for page in pdf.pages
             ])
 
         lines = full_text.split("\n")
 
         # ========================================
-        # 2️⃣ Extract School Year + Semester
+        # 2️⃣ School Year + Semester
         # ========================================
         header_line = next(line for line in lines if "Class List (" in line)
         inside = re.search(r"\((.*?)\)", header_line).group(1)
@@ -1277,45 +1294,65 @@ def preview_class_pdf():
         semester = semester_map.get(semester_raw, semester_raw)
 
         # ========================================
-        # 3️⃣ Extract Instructor
+        # 3️⃣ Instructor
         # ========================================
         header_idx = next(i for i, l in enumerate(lines) if "Class List (" in l)
-
         instructor_raw = lines[header_idx + 1].strip().title()
-        name_parts = instructor_raw.split(" ")
 
+        name_parts = instructor_raw.split(" ")
         instructor_last_name = name_parts[-1]
         instructor_first_name = " ".join(name_parts[:-1])
 
-        # Try lookup (optional for preview)
         instructor_doc = instructors_col.find_one({
             "first_name": instructor_first_name,
-            "last_name": instructor_last_name,
+            "last_name": instructor_last_name
         })
-
         instructor_id = instructor_doc["instructor_id"] if instructor_doc else None
 
         # ========================================
-        # 4️⃣ Extract Course + Section + Subject Code
+        # 4️⃣ Extract CLASS CODE (Class: A174)
         # ========================================
-        course_line = next(line for line in lines if ":: SA" in line)
-
-        parts = [p.strip() for p in course_line.split("::")]
-        course_section = parts[0]         # "BSINFOTECH 4C"
-        subject_code = parts[1]           # "SA 101"
-
-        # More robust course-section split
-        clean_cs = " ".join(course_section.split())
-        match = re.match(r"([A-Za-z]+)\s+(\S+)", clean_cs)
-
-        if not match:
-            return jsonify({"error": f"Unable to parse course/section from '{course_section}'"}), 400
-
-        course = match.group(1)
-        section = match.group(2)
+        class_code = None
+        for line in lines:
+            if "Class:" in line:
+                parts = line.split(":")
+                if len(parts) > 1:
+                    class_code = parts[1].strip()
+                break
 
         # ========================================
-        # 5️⃣ Get subject info from DB (if exists)
+        # 5️⃣ Extract Course + Section
+        # ========================================
+        course_section = None
+        for line in lines:
+            # Matches: BSINFOTECH 4C, BSIT 1A, BSCPE 3B, etc.
+            if re.search(r"[A-Za-z]+[A-Za-z]*\s+\d+[A-Za-z]$", line.strip()):
+                course_section = line.strip()
+                break
+
+        if not course_section:
+            return jsonify({
+                "error": "Unable to find course/section (example: BSINFOTECH 4C)"
+            }), 400
+
+        # Split last space only
+        course, section = course_section.rsplit(" ", 1)
+
+        # ========================================
+        # 6️⃣ Extract Subject Code (ANY Format AAA 101)
+        # ========================================
+        subject_code = None
+        for line in lines:
+            m = re.search(r"[A-Z]{1,}\s?\d{2,3}", line)
+            if m:
+                subject_code = m.group(0)
+                break
+
+        if not subject_code:
+            return jsonify({"error": "Unable to extract subject code"}), 400
+
+        # ========================================
+        # 7️⃣ Subject Info (Optional)
         # ========================================
         subject_doc = subjects_col.find_one({"subject_code": subject_code})
 
@@ -1323,35 +1360,39 @@ def preview_class_pdf():
         year_level = subject_doc["year_level"] if subject_doc else None
 
         # ========================================
-        # 6️⃣ Extract Student IDs
+        # 8️⃣ Extract Student IDs (multi-page)
         # ========================================
         student_ids = re.findall(r"\b\d{2}-\d-\d-\d{4}\b", full_text)
 
         # ========================================
-        # 7️⃣ RETURN PREVIEW (NO SCHEDULE)
+        # 9️⃣ RETURN PREVIEW JSON (NO DB SAVE)
         # ========================================
         return jsonify({
             "preview": True,
 
-            # class-level info
+            # Class metadata
+            "class_code": class_code,
             "school_year": school_year,
             "semester": semester,
             "course": course,
             "section": section,
+
+            # Subject
             "subject_code": subject_code,
             "subject_title": subject_title,
             "year_level": year_level,
 
-            # instructor
+            # Instructor
             "instructor_first_name": instructor_first_name,
             "instructor_last_name": instructor_last_name,
             "instructor_id": instructor_id,
 
-            # schedule removed for safety
+            # NO schedule auto-parse
             "schedule_blocks": [],
 
-            # students
+            # Students
             "student_ids": student_ids,
+
         }), 200
 
     except Exception as e:
