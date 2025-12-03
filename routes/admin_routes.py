@@ -1207,10 +1207,14 @@ def upload_students_to_class(class_id):
             return jsonify({"error": "No student IDs found in PDF"}), 400
 
         students_list = []
+        skipped_ids = []
+
         for sid in student_ids:
             stu = students_col.find_one({"student_id": sid})
+
             if not stu:
-                return jsonify({"error": f"Student {sid} not found"}), 400
+                skipped_ids.append(sid)
+                continue   # skip missing students, do NOT stop upload
 
             students_list.append({
                 "student_id": sid,
@@ -1244,6 +1248,10 @@ def upload_students_to_class(class_id):
 
         return jsonify({
             "message": f"{len(students_list)} students uploaded successfully",
+            "uploaded_count": len(students_list),
+            "skipped_count": len(skipped_ids),
+            "skipped_ids": skipped_ids,
+
             "class_code": class_code,
             "subject_code": subject_code,
             "subject_title": subject_title,
@@ -1259,7 +1267,7 @@ def upload_students_to_class(class_id):
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
     
-# 🟢 PREVIEW Class List PDF (NO SCHEDULE PARSING, NO DB SAVE)
+# 🟢 PREVIEW Class List PDF (WITH VALID/MISSING STUDENTS)
 @admin_bp.route("/api/classes/preview-pdf", methods=["POST"])
 @jwt_required()
 def preview_class_pdf():
@@ -1286,7 +1294,6 @@ def preview_class_pdf():
 
         # ========================================
         # 2️⃣ School Year + Semester
-        # Example: Class List (2025–2026 / First Semester)
         # ========================================
         header_line = next(line for line in lines if "Class List (" in line)
         inside = re.search(r"\((.*?)\)", header_line).group(1)
@@ -1301,8 +1308,7 @@ def preview_class_pdf():
         semester = semester_map.get(semester_raw, semester_raw)
 
         # ========================================
-        # 3️⃣ Instructor (line after "Class List (...)")
-        # Example: DARYL JOHN RAGADIO
+        # 3️⃣ Instructor
         # ========================================
         header_idx = next(i for i, l in enumerate(lines) if "Class List (" in l)
 
@@ -1319,9 +1325,7 @@ def preview_class_pdf():
         instructor_id = instructor_doc["instructor_id"] if instructor_doc else None
 
         # ========================================
-        # 4️⃣ Extract CLASS LINE
-        # Example:
-        # Class: A174 :: BSINFOTECH 4C :: SA 101 :: Systems Administration
+        # 4️⃣ Class Line
         # ========================================
         class_line = next((l for l in lines if l.startswith("Class:")), None)
         if not class_line:
@@ -1329,56 +1333,58 @@ def preview_class_pdf():
 
         parts = [p.strip() for p in class_line.split("::")]
 
-        # parts sample:
-        # [ "Class: A174", "BSINFOTECH 4C", "SA 101", "Systems Administration" ]
-
-        # -------- CLASS CODE --------
         m = re.search(r"Class:\s*([A-Za-z0-9]+)", parts[0])
         class_code = m.group(1) if m else None
 
-        # -------- COURSE + SECTION --------
-        course_section = parts[1]  # "BSINFOTECH 4C"
+        course_section = parts[1]  
         course, section = course_section.rsplit(" ", 1)
 
-        # -------- SUBJECT CODE --------
-        subject_code = parts[2]  # "SA 101"
+        subject_code = parts[2]
 
         # ========================================
-        # 5️⃣ Fetch Subject Info (Optional)
+        # 5️⃣ Subject Info
         # ========================================
         subject_doc = subjects_col.find_one({"subject_code": subject_code})
         subject_title = subject_doc["subject_title"] if subject_doc else None
         year_level = subject_doc["year_level"] if subject_doc else None
 
         # ========================================
-        # 6️⃣ Extract Student IDs (multi-page)
+        # 6️⃣ Extract Student IDs
         # ========================================
         student_ids = re.findall(r"\b\d{2}-\d-\d-\d{4}\b", full_text)
 
+        # ========================================
+        # 7️⃣ Validate against DB
+        # ========================================
+        valid_students = []
+        skipped_students = []
+
+        for sid in student_ids:
+            stu = students_col.find_one({"student_id": sid})
+            if stu:
+                valid_students.append(sid)
+            else:
+                skipped_students.append(sid)
+
+        # ========================================
+        # 8️⃣ Return Preview Data
+        # ========================================
         return jsonify({
             "preview": True,
-
-            # CLASS info
             "class_code": class_code,
             "course": course,
             "section": section,
             "school_year": school_year,
             "semester": semester,
-
-            # SUBJECT info
             "subject_code": subject_code,
             "subject_title": subject_title,
             "year_level": year_level,
-
-            # INSTRUCTOR info
             "instructor_first_name": instructor_first_name,
             "instructor_last_name": instructor_last_name,
             "instructor_id": instructor_id,
-
-            # Students (IDs only – display on frontend)
             "student_ids": student_ids,
-
-            # No schedule auto-parsing
+            "valid_students": valid_students,
+            "skipped_students": skipped_students,
             "schedule_blocks": []
         }), 200
 
