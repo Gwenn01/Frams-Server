@@ -1058,7 +1058,7 @@ def update_class(id):
 
     return jsonify({"message": "Class updated successfully"}), 200
 
-# 🟢 Upload students via Excel + Program Restriction
+# 🟢 Upload students via PDF + Program Restriction
 @admin_bp.route("/api/classes/<class_id>/upload-students", methods=["POST"])
 @jwt_required()
 def upload_students_to_class(class_id):
@@ -1150,14 +1150,22 @@ def upload_students_to_class(class_id):
 
         parts = [p.strip() for p in course_line.split("::")]
 
+        parts = [p.strip() for p in course_line.split("::")]
+
         course_section = parts[0]            # "BSINFOTECH 4C"
         subject_code = parts[1]              # "SA 101"
 
-        course, section = course_section.split(" ")
+        # Clean multiple spaces
+        clean_cs = " ".join(course_section.split())
 
-        # Ensure admin can only upload to their program
-        if course.upper() != admin_program:
-            return jsonify({"error": f"Course '{course}' does NOT match your program '{admin_program}'"}), 403
+        # Safe regex-based extraction
+        match = re.match(r"([A-Za-z]+)\s+(\S+)", clean_cs)
+
+        if not match:
+            return jsonify({"error": f"Unable to extract course/section from '{course_section}'"}), 400
+
+        course = match.group(1)
+        section = match.group(2)
 
         # ==========================================================
         # 6.1️⃣ Get FULL subject info from subjects collection
