@@ -1143,40 +1143,46 @@ def upload_students_to_class(class_id):
         class_code = None
         for line in lines:
             if "Class:" in line:
-                parts = line.split(":")
-                if len(parts) > 1:
-                    class_code = parts[1].strip()
+                m = re.search(r"Class:\s*([A-Za-z0-9]+)", line)
+                if m:
+                    class_code = m.group(1)    # A174
                 break
 
         # ==========================================================
         # 7️⃣ Extract Course + Section (BSINFOTECH 4C)
         # ==========================================================
-        # Pattern detects formats like:
-        # BSINFOTECH 4C, BSIT 1A, BSCPE 3B, etc.
         course_section = None
+
         for line in lines:
-            if re.search(r"[A-Za-z]+[A-Za-z]*\s+\d+[A-Za-z]$", line.strip()):
-                course_section = line.strip()
+            if "Class:" in line and "::" in line:
+                parts = [p.strip() for p in line.split("::")]
+                # parts: ["Class: A174", "BSINFOTECH 4C", "SA 101", "Systems ..."]
+                if len(parts) > 1:
+                    course_section = parts[1]   # "BSINFOTECH 4C"
                 break
 
         if not course_section:
             return jsonify({"error": "Unable to extract course & section"}), 400
 
-        # Last space splits course vs section
+        # Split last space
         course, section = course_section.rsplit(" ", 1)
 
-        # Course restriction
+        # Program restriction
         if course.upper() != admin_program:
-            return jsonify({"error": f"Course '{course}' does NOT match your program '{admin_program}'"}), 403
+            return jsonify({
+                "error": f"Course '{course}' does NOT match your program '{admin_program}'"
+            }), 403
 
         # ==========================================================
-        # 8️⃣ Extract Subject Code (any AAA 101 pattern)
+        # 8️⃣ Extract Subject Code 
         # ==========================================================
         subject_code = None
+
         for line in lines:
-            m = re.search(r"[A-Z]{1,}\s?\d{2,3}", line)
-            if m:
-                subject_code = m.group(0)
+            if "Class:" in line and "::" in line:
+                parts = [p.strip() for p in line.split("::")]
+                if len(parts) > 2:
+                    subject_code = parts[2]  # "SA 101"
                 break
 
         if not subject_code:
@@ -1269,7 +1275,7 @@ def preview_class_pdf():
         file_bytes = BytesIO(file.read())
 
         # ========================================
-        # 1️⃣ Extract TEXT (MULTI-PAGE SAFE)
+        # 1️⃣ Extract TEXT (Multi-page Safe)
         # ========================================
         with pdfplumber.open(file_bytes) as pdf:
             full_text = "\n".join([
@@ -1280,6 +1286,7 @@ def preview_class_pdf():
 
         # ========================================
         # 2️⃣ School Year + Semester
+        # Example: Class List (2025–2026 / First Semester)
         # ========================================
         header_line = next(line for line in lines if "Class List (" in line)
         inside = re.search(r"\((.*?)\)", header_line).group(1)
@@ -1294,12 +1301,14 @@ def preview_class_pdf():
         semester = semester_map.get(semester_raw, semester_raw)
 
         # ========================================
-        # 3️⃣ Instructor
+        # 3️⃣ Instructor (line after "Class List (...)")
+        # Example: DARYL JOHN RAGADIO
         # ========================================
         header_idx = next(i for i, l in enumerate(lines) if "Class List (" in l)
-        instructor_raw = lines[header_idx + 1].strip().title()
 
+        instructor_raw = lines[header_idx + 1].strip().title()
         name_parts = instructor_raw.split(" ")
+
         instructor_last_name = name_parts[-1]
         instructor_first_name = " ".join(name_parts[:-1])
 
@@ -1310,89 +1319,67 @@ def preview_class_pdf():
         instructor_id = instructor_doc["instructor_id"] if instructor_doc else None
 
         # ========================================
-        # 4️⃣ Extract CLASS CODE (Class: A174)
+        # 4️⃣ Extract CLASS LINE
+        # Example:
+        # Class: A174 :: BSINFOTECH 4C :: SA 101 :: Systems Administration
         # ========================================
-        class_code = None
-        for line in lines:
-            if "Class:" in line:
-                parts = line.split(":")
-                if len(parts) > 1:
-                    class_code = parts[1].strip()
-                break
+        class_line = next((l for l in lines if l.startswith("Class:")), None)
+        if not class_line:
+            return jsonify({"error": "Cannot find class line"}), 400
 
-        # ========================================
-        # 5️⃣ Extract Course + Section
-        # ========================================
-        course_section = None
-        for line in lines:
-            # Matches: BSINFOTECH 4C, BSIT 1A, BSCPE 3B, etc.
-            if re.search(r"[A-Za-z]+[A-Za-z]*\s+\d+[A-Za-z]$", line.strip()):
-                course_section = line.strip()
-                break
+        parts = [p.strip() for p in class_line.split("::")]
 
-        if not course_section:
-            return jsonify({
-                "error": "Unable to find course/section (example: BSINFOTECH 4C)"
-            }), 400
+        # parts sample:
+        # [ "Class: A174", "BSINFOTECH 4C", "SA 101", "Systems Administration" ]
 
-        # Split last space only
+        # -------- CLASS CODE --------
+        m = re.search(r"Class:\s*([A-Za-z0-9]+)", parts[0])
+        class_code = m.group(1) if m else None
+
+        # -------- COURSE + SECTION --------
+        course_section = parts[1]  # "BSINFOTECH 4C"
         course, section = course_section.rsplit(" ", 1)
 
-        # ========================================
-        # 6️⃣ Extract Subject Code (ANY Format AAA 101)
-        # ========================================
-        subject_code = None
-        for line in lines:
-            m = re.search(r"[A-Z]{1,}\s?\d{2,3}", line)
-            if m:
-                subject_code = m.group(0)
-                break
-
-        if not subject_code:
-            return jsonify({"error": "Unable to extract subject code"}), 400
+        # -------- SUBJECT CODE --------
+        subject_code = parts[2]  # "SA 101"
 
         # ========================================
-        # 7️⃣ Subject Info (Optional)
+        # 5️⃣ Fetch Subject Info (Optional)
         # ========================================
         subject_doc = subjects_col.find_one({"subject_code": subject_code})
-
         subject_title = subject_doc["subject_title"] if subject_doc else None
         year_level = subject_doc["year_level"] if subject_doc else None
 
         # ========================================
-        # 8️⃣ Extract Student IDs (multi-page)
+        # 6️⃣ Extract Student IDs (multi-page)
         # ========================================
         student_ids = re.findall(r"\b\d{2}-\d-\d-\d{4}\b", full_text)
 
-        # ========================================
-        # 9️⃣ RETURN PREVIEW JSON (NO DB SAVE)
-        # ========================================
         return jsonify({
             "preview": True,
 
-            # Class metadata
+            # CLASS info
             "class_code": class_code,
-            "school_year": school_year,
-            "semester": semester,
             "course": course,
             "section": section,
+            "school_year": school_year,
+            "semester": semester,
 
-            # Subject
+            # SUBJECT info
             "subject_code": subject_code,
             "subject_title": subject_title,
             "year_level": year_level,
 
-            # Instructor
+            # INSTRUCTOR info
             "instructor_first_name": instructor_first_name,
             "instructor_last_name": instructor_last_name,
             "instructor_id": instructor_id,
 
-            # NO schedule auto-parse
-            "schedule_blocks": [],
-
-            # Students
+            # Students (IDs only – display on frontend)
             "student_ids": student_ids,
 
+            # No schedule auto-parsing
+            "schedule_blocks": []
         }), 200
 
     except Exception as e:
