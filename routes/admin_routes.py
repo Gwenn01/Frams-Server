@@ -216,44 +216,54 @@ def get_admin_profile():
 @jwt_required()
 def get_stats():
     claims = get_jwt()
-    admin_id = claims.get("sub")
-    program = claims.get("program")  # e.g. BSINFOTECH
+    admin_id = claims.get("sub")       # e.g., ADMIN-INFOTECH
+    program = claims.get("program")    # e.g., BSINFOTECH
 
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
-    # 🧩 Attendance logs filtered by course
-    attendance_today = 0
-    query = {"date": today}
+    # ================================
+    # 🟢 ATTENDANCE TODAY (program + created_by)
+    # ================================
+    attendance_today = attendance_logs_col.count_documents({
+        "date": today,
+        "course": {"$regex": f"^{program}$", "$options": "i"},
+        "created_by": admin_id
+    })
 
-    if program:
-        query["$or"] = [
-            {"course": {"$regex": f"^{program}$", "$options": "i"}},
-            {"Course": {"$regex": f"^{program}$", "$options": "i"}},
-            {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
-            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}},
-        ]
+    # ================================
+    # 🟢 STUDENTS (program + created_by)
+    # ================================
+    student_filter = {
+        "course": {"$regex": f"^{program}$", "$options": "i"},
+        "created_by": admin_id
+    }
 
-    for log in attendance_logs_col.find(query):
-        attendance_today += len(log.get("students", []))
+    # ================================
+    # 🟢 CLASSES (program + created_by)
+    # ================================
+    class_filter = {
+        "course": {"$regex": f"^{program}$", "$options": "i"},
+        "created_by": admin_id
+    }
 
-    # 🧩 Students & Classes filtered by program
-    student_filter = {"$or": [
-        {"course": {"$regex": f"^{program}$", "$options": "i"}},
-        {"Course": {"$regex": f"^{program}$", "$options": "i"}},
-    ]} if program else {}
+    total_students = students_col.count_documents(student_filter)
+    total_classes = classes_col.count_documents(class_filter)
 
-    class_filter = {"$or": [
-        {"course": {"$regex": f"^{program}$", "$options": "i"}},
-        {"Course": {"$regex": f"^{program}$", "$options": "i"}},
-    ]} if program else {}
+    # ================================
+    # 🟡 INSTRUCTORS – GLOBAL (not program-based)
+    # ================================
+    total_instructors = instructors_col.count_documents({})
 
+    # ================================
+    # RETURN RESPONSE
+    # ================================
     return jsonify({
         "admin_id": admin_id,
         "program": program,
-        "total_students": students_col.count_documents(student_filter),
-        "total_instructors": instructors_col.count_documents({}),  # not program-based
-        "total_classes": classes_col.count_documents(class_filter),
-        "attendance_today": attendance_today
+        "total_students": total_students,
+        "total_instructors": total_instructors,
+        "total_classes": total_classes,
+        "attendance_today": attendance_today,
     }), 200
 
 
@@ -398,6 +408,7 @@ def last_student():
     program = claims.get("program")
 
     query = {"$or": [
+        {"created_by": admin_id},
         {"course": {"$regex": f"^{program}$", "$options": "i"}},
         {"Course": {"$regex": f"^{program}$", "$options": "i"}}
     ]} if program else {}
@@ -1386,17 +1397,8 @@ def get_free_classes():
 # ✅ Instructor Management
 # ==============================
 @admin_bp.route("/api/instructors", methods=["GET"])
-@jwt_required()
 def get_all_instructors():
-    admin_program = _admin_program()
-    creator = _admin_id()
-
-    # Fetch instructors created by this admin
-    instructors = list(instructors_col.find({
-        "created_by": creator,
-        "program": {"$regex": f"^{admin_program}$", "$options": "i"}
-    }).sort("first_name", 1))
-
+    instructors = list(instructors_col.find().sort("first_name", 1))
     formatted = []
 
     for instr in instructors:
@@ -1422,7 +1424,6 @@ def get_all_instructors():
 def assign_instructor_to_class(class_id):
     try:
         admin_program = get_jwt().get("program", "").upper()
-        creator = _admin_id()
 
         # -----------------------------------------------------
         # 1️⃣ Validate class exists first
@@ -1455,18 +1456,6 @@ def assign_instructor_to_class(class_id):
         instructor = instructors_col.find_one({"instructor_id": instructor_id})
         if not instructor:
             return jsonify({"error": "Instructor not found"}), 404
-        
-        # 🔥 Restrict instructor visibility by created_by
-        if instructor.get("created_by") != creator:
-            return jsonify({
-                "error": "Forbidden: You did not create this instructor"
-            }), 403
-
-        # 🔥 Restrict by program
-        if instructor.get("program", "").upper() != admin_program:
-            return jsonify({
-                "error": "Forbidden: Instructor belongs to another program"
-            }), 403
 
         # -----------------------------------------------------
         # 4️⃣ Update class with instructor info
@@ -1506,12 +1495,11 @@ def assign_instructor_to_class(class_id):
 @admin_bp.route("/api/instructors/<instructor_id>/classes", methods=["GET"])
 @jwt_required()
 def get_classes_by_instructor(instructor_id):
-    admin_program = _admin_program()
-    creator = _admin_id()
+    claims = get_jwt()
+    admin_program = claims.get("program", "").upper()
 
-    # Find classes created by THIS admin
+    # Get classes assigned to instructor
     classes = list(classes_col.find({
-        "created_by": creator,              # 🔥 Critical
         "instructor_id": instructor_id,
         "course": {"$regex": f"^{admin_program}$", "$options": "i"}
     }))
@@ -1531,10 +1519,6 @@ def get_attendance_logs():
 
     logs = []
 
-    # ============================================================
-    # 🔥 Fetch attendance logs ONLY for classes created by THIS admin
-    # AND belonging to his/her program
-    # ============================================================
     cursor = attendance_logs_col.find({
         "course": {"$regex": f"^{admin_program}$", "$options": "i"},
         "created_by": creator    
