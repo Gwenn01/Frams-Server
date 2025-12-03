@@ -216,50 +216,26 @@ def get_admin_profile():
 @jwt_required()
 def get_stats():
     claims = get_jwt()
-    admin_id = claims.get("sub")       # e.g., ADMIN-INFOTECH
-    program = claims.get("program")    # e.g., BSINFOTECH
+    admin_id = claims.get("sub")       # ADMIN-INFOTECH
+    program = claims.get("program")    # BSINFOTECH (for display only)
 
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
-    # ================================
-    # 🟢 ATTENDANCE TODAY (program + created_by)
-    # ================================
     attendance_today = attendance_logs_col.count_documents({
         "created_by": admin_id,
-        "date": today,
-        "course": {"$regex": f"^{program}$", "$options": "i"},
+        "date": today
+    })
+
+    total_students = students_col.count_documents({
         "created_by": admin_id
     })
 
-    # ================================
-    # 🟢 STUDENTS (program + created_by)
-    # ================================
-    student_filter = {
-        "created_by": admin_id,
-        "course": {"$regex": f"^{program}$", "$options": "i"},
+    total_classes = classes_col.count_documents({
         "created_by": admin_id
-    }
+    })
 
-    # ================================
-    # 🟢 CLASSES (program + created_by)
-    # ================================
-    class_filter = {
-        "created_by": admin_id,
-        "course": {"$regex": f"^{program}$", "$options": "i"},
-        "created_by": admin_id
-    }
-
-    total_students = students_col.count_documents(student_filter)
-    total_classes = classes_col.count_documents(class_filter)
-
-    # ================================
-    # 🟡 INSTRUCTORS – GLOBAL (not program-based)
-    # ================================
     total_instructors = instructors_col.count_documents({})
 
-    # ================================
-    # RETURN RESPONSE
-    # ================================
     return jsonify({
         "admin_id": admin_id,
         "program": program,
@@ -268,7 +244,6 @@ def get_stats():
         "total_classes": total_classes,
         "attendance_today": attendance_today,
     }), 200
-
 
 @admin_bp.route("/api/admin/overview/attendance-distribution", methods=["GET"])
 @jwt_required()
