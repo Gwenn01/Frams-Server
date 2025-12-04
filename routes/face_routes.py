@@ -36,11 +36,11 @@ CACHE_TTL = 300
 SESSION_INSTRUCTOR_DETECTED = {}
 SESSION_LOGGED_STUDENTS = {}
 
-# 🧠 Helper: Cache Management
+# Helper: Cache Management
 def get_cached_faces(class_id):
     cls = classes_collection.find_one({"_id": ObjectId(class_id)})
     if not cls:
-        print("❌ Class not found for embeddings.")
+        print("Class not found for embeddings.")
         return []
 
     registered = []
@@ -82,11 +82,11 @@ def get_cached_faces(class_id):
                         "angle": angle,
                         "is_instructor": True
                     })
-            print(f"👨‍🏫 Loaded instructor embeddings for: {instructor_id}")
+            print(f"Loaded instructor embeddings for: {instructor_id}")
         else:
-            print("⚠️ Instructor has no embeddings yet.")
+            print("Instructor has no embeddings yet.")
 
-    print(f"🧠 Loaded {len(registered)} embeddings (students + instructor) for class {class_id}")
+    print(f"Loaded {len(registered)} embeddings (students + instructor) for class {class_id}")
     return registered
 
 # REGISTER FACE
@@ -105,14 +105,14 @@ def register_auto():
 
         course = (data.get("Course") or data.get("course") or "").strip().upper() or "UNKNOWN"
         data["course"] = course  
-        current_app.logger.info(f"📘 Preserved course for {student_id}: {course}")
+        current_app.logger.info(f"Preserved course for {student_id}: {course}")
 
         hf_start = time.time()
         res = requests.post(f"{HF_AI_URL}/register-auto", json=data, timeout=60)
         hf_elapsed = time.time() - hf_start
 
         if res.status_code != 200:
-            current_app.logger.warning(f"⚠️ HF service error {res.status_code}: {res.text}")
+            current_app.logger.warning(f"HF service error {res.status_code}: {res.text}")
             return jsonify({
                 "success": False,
                 "error": "Hugging Face service error"
@@ -281,7 +281,7 @@ def register_instructor():
 
     except Exception as e:
         current_app.logger.error(
-            f"❌ /register-instructor error: {str(e)}\n{traceback.format_exc()}"
+            f"/register-instructor error: {str(e)}\n{traceback.format_exc()}"
         )
         return jsonify({
             "success": False,
@@ -438,7 +438,7 @@ def multi_face_recognize():
 
             if is_instructor or user_id == instructor_id:
                 if spoof_status == "Spoof" or (spoof_confidence is not None and spoof_confidence < 0.70):
-                    print(f"❌ Instructor SPOOF BLOCKED: {instructor_id} | confidence={spoof_confidence}")
+                    print(f"Instructor SPOOF BLOCKED: {instructor_id} | confidence={spoof_confidence}")
                     continue
 
                 SESSION_INSTRUCTOR_DETECTED[class_id] = {

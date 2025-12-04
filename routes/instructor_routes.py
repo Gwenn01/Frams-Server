@@ -18,9 +18,7 @@ classes_collection = db["classes"]
 attendance_collection = db["attendance_logs"]
 instructors_collection = db["instructors"]
 
-# -------------------------------------------------
-# 🔹 Instructor Registration
-# -------------------------------------------------
+# Instructor Registration
 @instructor_bp.route("/register", methods=["POST"])
 def register_instructor():
     data = request.get_json()
@@ -56,10 +54,7 @@ def register_instructor():
     create_instructor(instructor_data)
     return jsonify({"message": "Instructor registered successfully."}), 201
 
-
-# -------------------------------------------------
-# 🔹 Instructor Login
-# -------------------------------------------------
+# Instructor Login
 @instructor_bp.route("/login", methods=["POST"])
 def login_instructor():
     data = request.get_json()
@@ -89,15 +84,11 @@ def login_instructor():
         }
     }), 200
 
-
-# -------------------------------------------------
-# 🔹 Classes Assigned to Instructor
-# -------------------------------------------------
+# Classes Assigned to Instructor
 @instructor_bp.route("/<string:instructor_id>/classes", methods=["GET"])
 @jwt_required()
 def get_classes_by_instructor(instructor_id):
     try:
-        # 🔍 Fetch ACTIVE semester document
         active_semester = db["semesters"].find_one({"is_active": True})
 
         if not active_semester:
@@ -134,9 +125,7 @@ def get_classes_by_instructor(instructor_id):
         print("❌ ERROR in get_classes_by_instructor:", e)
         return jsonify({"error": str(e)}), 500
 
-# -------------------------------------------------
-# 🔹 Assigned Students per Class
-# -------------------------------------------------
+# Assigned Students per Class
 @instructor_bp.route("/class/<class_id>/assigned-students", methods=["GET"])
 @jwt_required()
 def get_assigned_students(class_id):
@@ -148,10 +137,7 @@ def get_assigned_students(class_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# -------------------------------------------------
-# 🔹 Attendance Report (per class)
-# -------------------------------------------------
+#  Attendance Report (per class)
 @instructor_bp.route("/class/<class_id>/attendance-report", methods=["GET"])
 @jwt_required()
 def attendance_report(class_id):
@@ -201,18 +187,16 @@ def get_all_instructor_classes(instructor_id):
         c["_id"] = str(c["_id"])
     return jsonify(classes), 200
 
-# -------------------------------------------------
-# 🔹 Attendance Report (all classes)
-# -------------------------------------------------
+# Attendance Report (all classes)
 @instructor_bp.route("/attendance-report/all", methods=["GET"])
 @jwt_required()
 def attendance_report_all():
-    instructor_id = get_jwt_identity()  # ✅ get current logged-in instructor
+    instructor_id = get_jwt_identity() 
 
     start_date = request.args.get("from")
     end_date = request.args.get("to")
 
-    query = {"instructor_id": instructor_id}  # 🔒 restrict to this instructor
+    query = {"instructor_id": instructor_id} 
 
     if start_date and end_date:
         try:
@@ -241,24 +225,7 @@ def attendance_report_all():
             })
     return jsonify(results), 200
 
-
-# -------------------------------------------------
-# 🔹 Test: Show All Classes
-# -------------------------------------------------
-@instructor_bp.route("/test/class-list", methods=["GET"])
-def list_all_class_assignments():
-    try:
-        data = get_all_classes_with_details()
-        return jsonify(data), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# -------------------------------------------------
-# 🔹 Instructor Overview Endpoints
-# -------------------------------------------------
-
-# ✅ Dashboard Stats (with Late + Absent counts)
+#  Instructor Overview Endpoints
 @instructor_bp.route("/<string:instructor_id>/overview", methods=["GET"])
 @jwt_required()
 def instructor_overview(instructor_id):
@@ -321,7 +288,6 @@ def instructor_overview(instructor_id):
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # ✅ Attendance Trend (day-wise counts for Present, Late, Absent)
 @instructor_bp.route("/<string:instructor_id>/overview/attendance-trend", methods=["GET"])
@@ -400,70 +366,22 @@ def instructor_class_summary(instructor_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
-# -------------------------------------------------
-# 🔹 Instructor Config for Attendance App 
-# -------------------------------------------------
-@instructor_bp.route("/config/<string:instructor_id>", methods=["GET"])
-def get_instructor_config(instructor_id):
-    """Provide instructor + active class info for attendance_app"""
-    try:
-        instructor = find_instructor_by_id(instructor_id)
-        if not instructor:
-            return jsonify({"error": "Instructor not found"}), 404
-
-        # Find currently active class for this instructor
-        active_class = classes_collection.find_one({
-            "instructor_id": instructor_id,
-            "is_attendance_active": True
-        })
-
-        if not active_class:
-            return jsonify({"error": "No active attendance session found"}), 404
-
-        # ✅ Build full config
-        config = {
-            "instructor_id": instructor["instructor_id"],
-            "instructor_name": f"{instructor['first_name']} {instructor['last_name']}",
-            "class_id": str(active_class["_id"]),
-            "subject_code": active_class.get("subject_code"),
-            "subject_title": active_class.get("subject_title"),
-            "course": active_class.get("course"),
-            "section": active_class.get("section"),
-            "attendance_start_time": active_class.get("attendance_start_time"),
-            "attendance_end_time": active_class.get("attendance_end_time"),
-            "api_url": "https://frams-server-production.up.railway.app/api",
-            # 🔹 Include student list for the app
-            "students": active_class.get("students", [])
-        }
-
-        return jsonify(config), 200
-
-    except Exception as e:
-        import traceback
-        print("❌ Error in /api/instructor/config/<instructor_id>:", traceback.format_exc())
-        return jsonify({"error": "Internal server error"}), 500
-    
 @instructor_bp.route("/profile", methods=["GET"])
-@jwt_required()  # Ensure the instructor is logged in
+@jwt_required() 
 def get_instructor_profile():
-    instructor_id = get_jwt_identity()  # Get the logged-in instructor's ID
+    instructor_id = get_jwt_identity()  
 
-    # Fetch the instructor's data from the database
     instructor = instructors_collection.find_one({"instructor_id": instructor_id})
 
     if not instructor:
         return jsonify({"message": "Instructor not found!"}), 404
 
-    # Check face registration status
     face_registered = "Yes" if instructor.get("embeddings") else "No"
-
-    # Combine first name and last name for the profile
     full_name = f"{instructor.get('first_name', '')} {instructor.get('last_name', '')}"
 
-    # Return profile data including face registration status
     return jsonify({
         "instructor_id": instructor.get("instructor_id", ""),
-        "name": full_name,  # Use the full name instead of 'name'
+        "name": full_name, 
         "email": instructor.get("email", ""),
         "face_registered": face_registered,
     }), 200
@@ -477,13 +395,11 @@ def get_class_sessions(class_id):
         if not instructor_id:
             return jsonify({"error": "Unauthorized"}), 403
 
-        # 🔥 Correct filter based on your DB
         sessions = list(attendance_collection.find({
             "class_id": class_id,
             "instructor_id": instructor_id
         }).sort("date", -1))
 
-        # convert _id to string
         for s in sessions:
             s["_id"] = str(s["_id"])
 
@@ -504,14 +420,11 @@ def get_instructor_by_id(instructor_id):
     if not inst:
         return jsonify({"error": "Instructor not found"}), 404
 
-    # Convert ObjectId → string
     inst["_id"] = str(inst["_id"])
 
-    # Ensure fields exist so frontend never breaks
     inst.setdefault("registered", False)
     inst.setdefault("embeddings", {})
 
-    # If embeddings exist but angles missing, treat as not registered
     required_angles = ["front", "left", "right", "up", "down"]
     has_all = all(
         angle in inst["embeddings"] 
@@ -528,17 +441,14 @@ def get_instructor_by_id(instructor_id):
 @jwt_required()
 def get_all_instructor_sessions(instructor_id):
     try:
-        # ensure correct instructor identity
         current_id = get_jwt_identity()
         if current_id != instructor_id:
             return jsonify({"error": "Unauthorized"}), 403
 
-        # fetch ALL attendance logs created by this instructor
         sessions = list(attendance_collection.find(
             {"instructor_id": instructor_id}
         ).sort("date", -1))
 
-        # convert ObjectId → string
         for s in sessions:
             s["_id"] = str(s["_id"])
 

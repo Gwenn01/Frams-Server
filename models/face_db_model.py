@@ -1,24 +1,20 @@
 from config.db_config import db
-from datetime import datetime  # ✅ FIXED import
+from datetime import datetime  
 
 # Collections
 students_collection = db["students"]
 attendance_collection = db["attendance_logs"]
 instructors_collection = db["instructors"]
 
-# -----------------------------
 # Save / Update student face data
-# -----------------------------
 def save_face_data(student_id, update_fields):
     try:
         if not student_id or not update_fields:
-            print("❌ Missing student_id or update_fields.")
+            print("Missing student_id or update_fields.")
             return False
 
-        # 🧠 Extract embeddings separately
         embeddings = update_fields.pop("embeddings", None)
 
-        # ✅ Prepare general student info
         set_ops = {
             "student_id": student_id,
             "First_Name": update_fields.get("First_Name"),
@@ -28,17 +24,14 @@ def save_face_data(student_id, update_fields):
             "registered": True,
         }
 
-        # ✅ Only set Course if it actually exists (prevent overwrite)
         if update_fields.get("Course"):
             set_ops["Course"] = update_fields["Course"]
 
-        # ✅ Merge embeddings per angle
         if embeddings and isinstance(embeddings, dict):
             for angle, vector in embeddings.items():
                 if vector and isinstance(vector, list):
                     set_ops[f"embeddings.{angle}"] = vector
 
-        # ✅ Final MongoDB update
         update_ops = {
             "$set": set_ops,
             "$setOnInsert": {"created_at": datetime.utcnow()},
@@ -56,34 +49,28 @@ def save_face_data(student_id, update_fields):
 
     except Exception as e:
         import traceback
-        print("❌ MongoDB save error:", str(e))
+        print("MongoDB save error:", str(e))
         print(traceback.format_exc())
         return False
-    
-# -----------------------------
+
 # Save / Update Instructor face data (only `registered` and `embeddings`)
-# -----------------------------
 def save_face_data_for_instructor(instructor_id, update_fields):
     try:
         if not instructor_id or not update_fields:
-            print("❌ Missing instructor_id or update_fields.")
+            print("Missing instructor_id or update_fields.")
             return False
 
-        # 🧠 Extract embeddings separately
         embeddings = update_fields.pop("embeddings", None)
 
-        # ✅ Prepare update operation for the instructor
         set_ops = {
-            "registered": True,  # Mark as registered
+            "registered": True,
         }
 
-        # ✅ Only store embeddings if they exist
         if embeddings and isinstance(embeddings, dict):
             for angle, vector in embeddings.items():
                 if vector and isinstance(vector, list):
                     set_ops[f"embeddings.{angle}"] = vector
 
-        # ✅ Final MongoDB update for instructors
         update_ops = {
             "$set": set_ops,
             "$setOnInsert": {"created_at": datetime.utcnow()},
@@ -92,22 +79,20 @@ def save_face_data_for_instructor(instructor_id, update_fields):
         result = instructors_collection.update_one(
             {"instructor_id": instructor_id},
             update_ops,
-            upsert=True  # Insert if instructor_id doesn't exist
+            upsert=True  
         )
 
         updated_angles = list(embeddings.keys()) if embeddings else []
-        print(f"✅ Face data saved for instructor {instructor_id}. Updated angles: {updated_angles}")
+        print(f"Face data saved for instructor {instructor_id}. Updated angles: {updated_angles}")
         return True
 
     except Exception as e:
         import traceback
-        print("❌ MongoDB save error:", str(e))
+        print("MongoDB save error:", str(e))
         print(traceback.format_exc())
         return False
 
-# -----------------------------
 # Normalize student document
-# -----------------------------
 def normalize_student(doc):
     if not doc:
         return None
@@ -125,10 +110,7 @@ def normalize_student(doc):
         "embeddings": doc.get("embeddings", {})
     }
 
-
-# -----------------------------
 # Load all students with embeddings
-# -----------------------------
 def load_registered_faces():
     try:
         registered_faces = []
@@ -145,10 +127,7 @@ def load_registered_faces():
         print("❌ MongoDB load error:", str(e))
         return []
 
-
-# -----------------------------
 # Lookup student by ID
-# -----------------------------
 def get_student_by_id(student_id):
     try:
         student = students_collection.find_one({
@@ -162,10 +141,7 @@ def get_student_by_id(student_id):
         print("❌ MongoDB lookup error:", str(e))
         return None
 
-
-# -----------------------------
 # Save attendance log
-# -----------------------------
 def save_attendance_log(student_id, subject_id, timestamp=None, confidence=None):
     try:
         student = get_student_by_id(student_id)
@@ -192,10 +168,7 @@ def save_attendance_log(student_id, subject_id, timestamp=None, confidence=None)
         print("❌ MongoDB attendance log error:", str(e))
         return False
 
-
-# -----------------------------
 # Load attendance logs
-# -----------------------------
 def load_attendance_logs(subject_id):
     try:
         logs = list(attendance_collection.find({"subject_id": subject_id}))

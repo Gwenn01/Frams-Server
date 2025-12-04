@@ -3,14 +3,13 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 import os
 
-# Load environment variables from .env file
 load_dotenv()
 
 # MongoDB Atlas connection
 MONGO_URI = os.getenv("MONGO_URI")
 
 if not MONGO_URI:
-    raise ValueError("❌ MONGO_URI not found in environment variables.")
+    raise ValueError("MONGO_URI not found in environment variables.")
 
 client = MongoClient(MONGO_URI, maxPoolSize=20, connect=True)
 

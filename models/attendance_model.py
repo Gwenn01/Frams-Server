@@ -3,14 +3,10 @@ from datetime import datetime, timedelta, timezone
 
 attendance_logs_collection = db["attendance_logs"]
 
-# -----------------------------
 # Timezone Setup
-# -----------------------------
 PH_TZ = timezone(timedelta(hours=8))  # GMT+8 Philippine Time
 
-# -----------------------------
 # Helpers
-# -----------------------------
 def _today_date_str():
     """Return today's date as YYYY-MM-DD string (PH time)."""
     return datetime.now(PH_TZ).strftime("%Y-%m-%d")
@@ -37,19 +33,11 @@ def _now_datetime():
     """Return current datetime in PH (tz-aware, stored in Mongo)."""
     return datetime.now(PH_TZ)
 
-# -----------------------------
 # Attendance Logging
-# -----------------------------
 def log_attendance(class_data, student_data, status="Present", date_val=None, class_start_time=None):
-    """
-    Record student attendance. Marks as Late if 15–30 minutes late.
-    Does NOT log if >30 minutes late. Automatically avoids duplicates.
-    Saves start_time and end_time per session.
-    """
     now = _now_datetime()
     date_val = _parse_date_str(date_val or _today_date_str())
 
-    # 🕓 Determine status (Present / Late / Too Late)
     if class_start_time:
         if isinstance(class_start_time, str):
             try:
@@ -68,17 +56,15 @@ def log_attendance(class_data, student_data, status="Present", date_val=None, cl
             if 15 <= minutes_late < 30:
                 status = "Late"
             elif minutes_late >= 30:
-                print("⛔ Too late (>30 min). No log created.")
+                print("Too late (>30 min). No log created.")
                 return None
 
-    # 🚫 Prevent duplicate logs for today
     if already_logged_today(student_data["student_id"], class_data["class_id"], date_val):
         print(f"⚠️ {student_data['student_id']} already logged today — skipping.")
         return None
 
     base_filter = {"class_id": class_data["class_id"], "date": date_val}
 
-    # 🟢 Ensure session exists — also store start_time if this is first log
     attendance_logs_collection.update_one(
         base_filter,
         {
@@ -95,14 +81,13 @@ def log_attendance(class_data, student_data, status="Present", date_val=None, cl
                 "semester": class_data.get("semester"),
                 "date": date_val,
                 "students": [],
-                "start_time": _now_time_str(),     # ⬅️ FIRST TIME LOG
-                "end_time": None                   # ⬅️ FILLED LATER
+                "start_time": _now_time_str(),    
+                "end_time": None                   
             }
         },
         upsert=True
     )
 
-    # 🟡 Try update existing student record
     res = attendance_logs_collection.update_one(
         {**base_filter, "students.student_id": student_data["student_id"]},
         {
@@ -112,12 +97,11 @@ def log_attendance(class_data, student_data, status="Present", date_val=None, cl
                 "students.$.status": status,
                 "students.$.time": _now_time_str(),
                 "students.$.time_logged": now,
-                "end_time": _now_time_str()        # ⬅️ UPDATE END TIME
+                "end_time": _now_time_str()   
             }
         }
     )
 
-    # 🟣 If no update, push new student
     if res.modified_count == 0:
         attendance_logs_collection.update_one(
             base_filter,
@@ -133,22 +117,15 @@ def log_attendance(class_data, student_data, status="Present", date_val=None, cl
                     }
                 },
                 "$set": {
-                    "end_time": _now_time_str()    # ⬅️ every new log updates end_time
+                    "end_time": _now_time_str()   
                 }
             }
         )
 
     return True
 
-
-# -----------------------------
-# Queries
-# -----------------------------
 def already_logged_today(student_id, class_id, date_val=None):
-    """
-    Check if student already logged attendance for this date.
-    Prevents duplicate records from multi-face recognition.
-    """
+
     date_val = _parse_date_str(date_val) if date_val else _today_date_str()
     return attendance_logs_collection.find_one({
         "class_id": class_id,
@@ -157,7 +134,6 @@ def already_logged_today(student_id, class_id, date_val=None):
     }) is not None
 
 def has_logged_attendance(student_id, class_id, date_val=None):
-    """Alias for already_logged_today (legacy support)."""
     return already_logged_today(student_id, class_id, date_val)
 
 def get_attendance_by_student(student_id):
@@ -227,7 +203,6 @@ def mark_absent_bulk(class_data, date_val, student_list):
 
     base_filter = {"class_id": class_data["class_id"], "date": date_val}
 
-    # 🟢 Ensure the attendance session exists (FIRST TIME ONLY)
     attendance_logs_collection.update_one(
         base_filter,
         {
@@ -244,19 +219,18 @@ def mark_absent_bulk(class_data, date_val, student_list):
                 "semester": class_data.get("semester"),
                 "date": date_val,
                 "students": [],
-                "start_time": now_time_str,   # ⬅️ FIRST attendance log of the day
-                "end_time": None              # ⬅️ updated later
+                "start_time": now_time_str, 
+                "end_time": None             
             }
         },
         upsert=True
     )
 
-    # 🟡 Insert absent logs (NO DUPLICATES)
     for s in student_list:
         attendance_logs_collection.update_one(
             {
                 **base_filter,
-                "students.student_id": {"$ne": s["student_id"]}  # Prevent duplicates
+                "students.student_id": {"$ne": s["student_id"]}
             },
             {
                 "$push": {
@@ -270,14 +244,12 @@ def mark_absent_bulk(class_data, date_val, student_list):
                     }
                 },
                 "$set": {
-                    "end_time": now_time_str  # ⬅️ UPDATE SESSION END TIME
+                    "end_time": now_time_str  
                 }
             }
         )
 
-# -----------------------------
 # Maintenance
-# -----------------------------
 def ensure_indexes():
     attendance_logs_collection.create_index([("class_id", 1), ("date", 1)], unique=False)
     attendance_logs_collection.create_index([("students.student_id", 1), ("date", 1)])

@@ -6,7 +6,7 @@ from flask_jwt_extended import create_access_token
 
 auth_bp = Blueprint('auth', __name__)
 
-# ✅ Unified registration route
+# Unified registration route
 @auth_bp.route('/register', methods=['POST'])
 def register():
     data = request.json
@@ -48,7 +48,7 @@ def register():
     return jsonify({"error": "Invalid role"}), 400
 
 
-# ✅ Unified login route
+#  Unified login route
 @auth_bp.route('/login', methods=['POST'])
 def login():
     data = request.json

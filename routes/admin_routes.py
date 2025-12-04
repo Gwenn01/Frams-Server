@@ -3,7 +3,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, date
 import os
 import pandas as pd
-from io import BytesIO
 from bson import ObjectId
 from config.db_config import db
 from models.admin_model import find_admin_by_user_id, find_admin_by_email, create_admin
@@ -22,9 +21,7 @@ subjects_col = db["subjects"]
 admins_col = db["admins"]
 semesters_col = db["semesters"]
 
-# -------------------------------
 # Helpers
-# ------------------------------- frontend
 def today_str_utc():
     return datetime.utcnow().strftime("%Y-%m-%d")
 
@@ -51,7 +48,7 @@ def _serialize_subject(s):
         "created_at": s.get("created_at"),
     }
 
-# 📌 Helper to serialize class documents
+# Helper to serialize class documents
 def _serialize_class(cls):
     students = cls.get("students", [])
     return {
@@ -73,16 +70,10 @@ def _serialize_class(cls):
     }
 
 def _admin_program():
-    """
-    Extracts the admin's program (BSINFOTECH or BSCS)
-    from JWT claims and returns uppercase.
-    """
     claims = get_jwt()
     return claims.get("program", "").upper()
 
-# =========================================
-# ✅ Auth: Register (after frontend OTP)
-# =========================================
+# Auth: Register (after frontend OTP)
 @admin_bp.route("/api/admin/register", methods=["POST"])
 def register_admin():
     data = request.get_json() or {}
@@ -92,11 +83,9 @@ def register_admin():
     user_id = (data.get("user_id") or "").strip()
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
-    program = (data.get("program") or "").strip().upper()  # ✅ Added
+    program = (data.get("program") or "").strip().upper() 
 
-    # -------------------------------
     # Validate required fields
-    # -------------------------------
     if not all([first_name, last_name, user_id, email, password, program]):
         return jsonify({"error": "Missing required fields"}), 400
 
@@ -112,9 +101,7 @@ def register_admin():
     if find_admin_by_email(email):
         return jsonify({"error": "Email already exists"}), 409
 
-    # -------------------------------
     # Save admin data
-    # -------------------------------
     hashed_password = generate_password_hash(password)
     full_name = f"{first_name} {last_name}".strip()
 
@@ -133,9 +120,7 @@ def register_admin():
 
     return jsonify({"message": f"Admin for {program} registered successfully"}), 201
 
-# =========================================
-# ✅ Auth: Login
-# =========================================
+# Auth: Login
 @admin_bp.route("/api/admin/login", methods=["POST"])
 def login_admin():
     data = request.get_json() or {}
@@ -149,9 +134,8 @@ def login_admin():
     if not check_password_hash(admin["password"], password):
         return jsonify({"error": "Incorrect password"}), 401
 
-    program = admin.get("program")  # Example: BSINFOTECH or BSCS
+    program = admin.get("program")  
 
-    # ✅ FIXED: move program to additional_claims
     token = create_access_token(
         identity=user_id,
         additional_claims={
@@ -174,20 +158,14 @@ def login_admin():
         }
     ), 200
 
-# ==============================
-# ✅ Admin Profile (for Student Register Page)
-# ==============================
+# Admin Profile (for Student Register Page)
 @admin_bp.route("/api/admin/profile", methods=["GET"])
 @jwt_required()
 def get_admin_profile():
-    """
-    Returns the logged-in admin's profile (used by StudentRegisterFaceComponent.jsx).
-    """
     claims = get_jwt()
-    admin_id = claims.get("sub")  # stored as identity during login
+    admin_id = claims.get("sub")
     program = claims.get("program")
 
-    # 🧩 Try to find the admin record in DB
     admin_doc = admins_col.find_one({"user_id": admin_id})
     if not admin_doc:
         return jsonify({"error": "Admin not found"}), 404
@@ -200,16 +178,12 @@ def get_admin_profile():
         "program": admin_doc.get("program", program or "Unknown Program")
     }), 200
 
-# ==============================
-# ✅ Admin Overview Endpoints
-# ==============================
+# Admin Overview Endpoints
 @admin_bp.route("/api/admin/overview/stats", methods=["GET"])
 def get_stats():
     program = request.args.get("program")  # e.g. BSINFOTECH / BSCS
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
-    # 🧩 Attendance logs filtered by course (handles both 'course' and 'Course')
-    attendance_today = 0
     query = {"date": today}
     if program:
         query["$or"] = [
@@ -222,7 +196,6 @@ def get_stats():
     for log in attendance_logs_col.find(query):
         attendance_today += len(log.get("students", []))
 
-    # 🧩 Students and Classes filtered by course (case-insensitive)
     student_filter = {"$or": [
         {"course": {"$regex": f"^{program}$", "$options": "i"}},
         {"Course": {"$regex": f"^{program}$", "$options": "i"}}
@@ -233,10 +206,8 @@ def get_stats():
         {"Course": {"$regex": f"^{program}$", "$options": "i"}}
     ]} if program else {}
 
-    # 🧩 Instructors — fetch ALL instructors (not filtered by program)
     total_instructors = instructors_col.count_documents({})
 
-    # ✅ Return compiled overview
     return jsonify(
         {
             "total_students": students_col.count_documents(student_filter),
@@ -246,77 +217,11 @@ def get_stats():
         }
     )
 
-@admin_bp.route("/api/admin/overview/attendance-distribution", methods=["GET"])
-def attendance_distribution():
-    program = request.args.get("program")
-
-    # Match logs by course at root or inside students array
-    match_stage = {"$match": {
-        "$or": [
-            {"course": {"$regex": f"^{program}$", "$options": "i"}},
-            {"Course": {"$regex": f"^{program}$", "$options": "i"}},
-            {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
-            {"students.Course": {"$regex": f"^{program}$", "$options": "i"}},
-        ]
-    }} if program else {}
-
-    pipeline = []
-    if match_stage:
-        pipeline.append(match_stage)
-
-    pipeline += [
-        {"$unwind": "$students"},
-        {"$group": {"_id": "$students.status", "count": {"$sum": 1}}},
-    ]
-
-    result = list(attendance_logs_col.aggregate(pipeline))
-
-    present = late = absent = 0
-    for r in result:
-        status = (r["_id"] or "").strip().lower()
-        if status == "present":
-            present = r["count"]
-        elif status == "late":
-            late = r["count"]
-        elif status == "absent":
-            absent = r["count"]
-
-    return jsonify({"present": present, "late": late, "absent": absent})
-
-@admin_bp.route("/api/admin/overview/attendance-trend", methods=["GET"])
-def attendance_trend():
-    program = request.args.get("program")
-    days = int(request.args.get("days", 7))
-    end_date = datetime.utcnow().date()
-    trend = []
-
-    for i in range(days):
-        d = end_date - timedelta(days=(days - 1 - i))
-        d_str = d.strftime("%Y-%m-%d")
-
-        # Match by date and program at root or inside students
-        query = {"date": d_str}
-        if program:
-            query["$or"] = [
-                {"course": {"$regex": f"^{program}$", "$options": "i"}},
-                {"Course": {"$regex": f"^{program}$", "$options": "i"}},
-                {"students.course": {"$regex": f"^{program}$", "$options": "i"}},
-                {"students.Course": {"$regex": f"^{program}$", "$options": "i"}},
-            ]
-
-        day_total = 0
-        for log in attendance_logs_col.find(query):
-            day_total += len(log.get("students", []))
-        trend.append({"date": d_str, "count": day_total})
-
-    return jsonify(trend)
-
 @admin_bp.route("/api/admin/overview/recent-logs", methods=["GET"])
 def recent_logs():
     program = request.args.get("program")
     limit = int(request.args.get("limit", 5))
 
-    # Match both root and nested course fields
     query = {}
     if program:
         query["$or"] = [
@@ -379,19 +284,14 @@ def last_student():
 from flask import jsonify, request
 from datetime import datetime, timezone
 
-# ==============================
-# ✅ Student Management
-# ==============================
-# ============================================================
-# 📌 GET ALL STUDENTS — Filtered by Admin’s Program
-# ============================================================
+# Student Management
+# GET ALL STUDENTS — Filtered by Admin’s Program
 @admin_bp.route("/api/admin/students", methods=["GET"])
 @jwt_required()
 def get_all_students():
     claims = get_jwt()
-    program = claims.get("program")  # ✅ read from claims, not identity
+    program = claims.get("program")
 
-    # 🧩 Apply program filter (case-insensitive)
     course_filter = {}
     if program:
         course_filter["$or"] = [
@@ -399,7 +299,6 @@ def get_all_students():
             {"course": {"$regex": f"^{program}$", "$options": "i"}},
         ]
 
-    # 🧩 Fetch students only from that course
     students = list(
         students_col.find(
             course_filter,
@@ -420,7 +319,6 @@ def get_all_students():
     for s in students:
         sid = s.get("student_id")
 
-        # ✅ Aggregate attendance stats
         pipeline = [
             {"$unwind": "$students"},
             {"$match": {"students.student_id": sid}},
@@ -464,10 +362,7 @@ def get_all_students():
 
     return jsonify(normalized), 200
 
-
-# ============================================================
-# 📌 GET SINGLE STUDENT — Filtered by Admin’s Program
-# ============================================================
+#  GET SINGLE STUDENT — Filtered by Admin’s Program
 @admin_bp.route("/api/admin/students/<student_id>", methods=["GET"])
 @jwt_required()
 def get_student(student_id):
@@ -485,7 +380,6 @@ def get_student(student_id):
     if not student:
         return jsonify({"error": "Student not found or not in your program"}), 404
 
-    # ✅ Compute attendance stats for this student
     pipeline = [
         {"$unwind": "$students"},
         {"$match": {"students.student_id": student_id}},
@@ -527,7 +421,7 @@ def get_student(student_id):
         }
     ), 200
 
-# 📌 UPDATE STUDENT
+# UPDATE STUDENT
 @admin_bp.route("/api/admin/students/<student_id>", methods=["PUT"])
 def update_student(student_id):
     data = request.get_json() or {}
@@ -552,23 +446,20 @@ def update_student(student_id):
     return jsonify({"message": "Student updated successfully"}), 200
 
 
-# 📌 DELETE STUDENT
+# DELETE STUDENT
 @admin_bp.route("/api/admin/students/<student_id>", methods=["DELETE"])
 def delete_student(student_id):
     """Delete a student record and refresh the face embeddings cache."""
     try:
-        # Attempt to delete the student document
         result = students_col.delete_one({"student_id": student_id})
         if result.deleted_count == 0:
             return jsonify({"error": "Student not found"}), 404
 
-        # ✅ Refresh the cached embeddings after deletion
         print(f"🗑️ Student {student_id} deleted — refreshing face cache...")
 
-        # Import the helper from your face blueprint (same function inside /login)
         from routes.face_routes import refresh_face_cache
 
-        refresh_face_cache()  # Rebuilds CACHED_FACES in memory
+        refresh_face_cache() 
 
         return jsonify({
             "message": f"Student {student_id} deleted successfully and cache refreshed."
@@ -580,10 +471,7 @@ def delete_student(student_id):
         print(traceback.format_exc())
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
-
-# ==============================
 # ✅ Subject Management
-# ==============================
 @admin_bp.route("/api/admin/subjects", methods=["GET"])
 def get_subjects():
     subjects = list(subjects_col.find().sort("created_at", -1))
@@ -772,7 +660,6 @@ def activate_single_semester():
         print("❌ PUT /semester/activate error:", e)
         return jsonify({"error": str(e)}), 500
     
-
 @admin_bp.route("/api/admin/subjects/active", methods=["GET"])
 @jwt_required()
 def get_active_subjects():
@@ -825,15 +712,11 @@ def get_active_subjects():
         print("❌ Error in get_active_subjects:", e)
         return jsonify({"error": str(e)}), 500
 
-# ==============================
-# ✅ Class Management (Updated)
-# ==============================
 
+# ✅ Class Management 
 from datetime import datetime
 import pandas as pd
-from io import BytesIO
 
-# 🟢 Create new class
 @admin_bp.route("/api/classes", methods=["POST"])
 @jwt_required()
 def create_class():
@@ -846,8 +729,6 @@ def create_class():
         "year_level", "section", "instructor_id"
     ]
 
-    # Remove “semester” because backend will auto-detect
-    # "semester" removed intentionally
 
     if not all(data.get(field) for field in required_fields):
         return jsonify({"error": "Missing required fields"}), 400
@@ -855,38 +736,26 @@ def create_class():
     if data["course"].upper() != admin_program:
         return jsonify({"error": "You are not allowed to create a class for another program"}), 403
 
-    # ---- 🔥 Fetch Active Semester ----
     active_sem = semesters_col.find_one({"is_active": True})
     if not active_sem:
         return jsonify({"error": "No active semester found. Please set an active semester first."}), 400
 
-    # 🔍 Fetch Instructor
     instructor = instructors_col.find_one({"instructor_id": data["instructor_id"]})
     if not instructor:
         return jsonify({"error": "Instructor not found"}), 404
 
-    # 🧩 Build the class document
     new_class = {
         "subject_code": data["subject_code"],
         "subject_title": data["subject_title"],
         "course": data["course"],
         "year_level": data["year_level"],
-
-        # ---------------------------------------------
-        # 🔥 AUTO-ASSIGN SEMESTER + SCHOOL YEAR HERE
-        # ---------------------------------------------
         "semester": active_sem["semester_name"],
         "school_year": active_sem["school_year"],
-
         "section": data["section"],
         "schedule_blocks": data.get("schedule_blocks", []),
-
-        # Instructor
         "instructor_id": instructor["instructor_id"],
         "instructor_first_name": instructor["first_name"],
         "instructor_last_name": instructor["last_name"],
-
-        # Defaults
         "students": [],
         "is_attendance_active": False,
         "attendance_start_time": None,
@@ -899,13 +768,12 @@ def create_class():
 
     return jsonify(_serialize_class(cls)), 201
 
-# 🟢 Get all classes (filtered by admin program + active semester)
+# Get all classes (filtered by admin program + active semester)
 @admin_bp.route("/api/classes", methods=["GET"])
 @jwt_required()
 def get_all_classes():
     admin_program = _admin_program()
 
-    # 1️⃣ Get active semester
     active_sem = semesters_col.find_one({"is_active": True})
     if not active_sem:
         return jsonify({"error": "No active semester found"}), 400
@@ -913,14 +781,12 @@ def get_all_classes():
     active_semester = active_sem["semester_name"]
     active_school_year = active_sem["school_year"]
 
-    # 2️⃣ Fetch classes only for that semester + SY
     classes = list(classes_col.find({
         "course": {"$regex": f"^{admin_program}$", "$options": "i"},
         "semester": active_semester,
         "school_year": active_school_year
     }).sort("created_at", -1))
 
-    # 3️⃣ Compute attendance stats (unchanged from your code)
     output = []
 
     for cls in classes:
@@ -952,19 +818,17 @@ def get_all_classes():
 
     return jsonify(output), 200
 
-# 🟢 Get single class
+# Get single class
 @admin_bp.route("/api/classes/<id>", methods=["GET"])
 @jwt_required()
 def get_class(id):
     admin_program = _admin_program()
 
-    # Validate ObjectId
     try:
         cls = classes_col.find_one({"_id": ObjectId(id)})
     except Exception:
         return jsonify({"error": "Invalid class ID"}), 400
 
-    # Not found
     if not cls:
         return jsonify({"error": "Class not found"}), 404
 
@@ -972,9 +836,6 @@ def get_class(id):
     if cls.get("course", "").upper() != admin_program:
         return jsonify({"error": "You are not allowed to access classes from another program"}), 403
 
-    # ---------------------------------------
-    # Attendance Stats (Your existing logic)
-    # ---------------------------------------
     class_id = str(cls["_id"])
     stats = list(attendance_logs_col.aggregate([
         {"$match": {"class_id": class_id}},
@@ -1003,31 +864,27 @@ def get_class(id):
 
     return jsonify(cls_data), 200
 
-# 🟢 Update class details or instructor
+# Update class details or instructor
 @admin_bp.route("/api/classes/<id>", methods=["PUT"])
 @jwt_required()
 def update_class(id):
     admin_program = _admin_program()
     data = request.get_json() or {}
 
-    # 🧩 Fetch class first
     cls = classes_col.find_one({"_id": ObjectId(id)})
 
     if not cls:
         return jsonify({"error": "Class not found"}), 404
 
-    # ❗ Prevent editing classes from another program
     if cls["course"].upper() != admin_program:
         return jsonify({"error": "You are not allowed to modify another program's class"}), 403
 
     update_data = {}
 
-    # 🟢 Updatable fields (except instructor)
     for field in ["section", "semester", "schedule_blocks"]:
         if field in data:
             update_data[field] = data[field]
 
-    # 🟢 Handle instructor update
     if "instructor_id" in data and data["instructor_id"]:
 
         instructor = instructors_col.find_one({"instructor_id": data["instructor_id"]})
@@ -1035,7 +892,6 @@ def update_class(id):
         if not instructor:
             return jsonify({"error": "Instructor not found"}), 404
 
-        # Update instructor-related fields
         update_data["instructor_id"] = instructor["instructor_id"]
         update_data["instructor_first_name"] = instructor["first_name"]
         update_data["instructor_last_name"] = instructor["last_name"]
@@ -1043,7 +899,6 @@ def update_class(id):
     if not update_data:
         return jsonify({"error": "No valid fields provided"}), 400
 
-    # 🔧 Apply update
     try:
         result = classes_col.update_one(
             {"_id": ObjectId(id)},
@@ -1058,7 +913,7 @@ def update_class(id):
 
     return jsonify({"message": "Class updated successfully"}), 200
 
-# 🟢 Upload students via PDF + Program Restriction (NO SCHEDULE PARSING)
+# Upload students via PDF + Program Restriction 
 @admin_bp.route("/api/classes/<class_id>/upload-students", methods=["POST"])
 @jwt_required()
 def upload_students_to_class(class_id):
@@ -1067,9 +922,6 @@ def upload_students_to_class(class_id):
     from io import BytesIO
 
     try:
-        # ============================================
-        # 1️⃣ Validate Admin + Class Access
-        # ============================================
         admin = get_jwt()
         admin_program = admin.get("program", "").upper()
 
@@ -1082,18 +934,12 @@ def upload_students_to_class(class_id):
                 "error": "Forbidden — You cannot upload students to another program's class"
             }), 403
 
-        # ============================================
-        # 2️⃣ Read Uploaded File
-        # ============================================
         file = request.files.get("file")
         if not file:
             return jsonify({"error": "No file uploaded"}), 400
 
         file_bytes = BytesIO(file.read())
 
-        # ============================================
-        # 3️⃣ Extract ALL TEXT (Multi-page Safe)
-        # ============================================
         with pdfplumber.open(file_bytes) as pdf:
             full_text = "\n".join([
                 page.extract_text() or "" for page in pdf.pages
@@ -1101,9 +947,6 @@ def upload_students_to_class(class_id):
 
         lines = full_text.split("\n")
 
-        # ==========================================================
-        # 4️⃣ Extract School Year + Semester
-        # ==========================================================
         header_line = next(line for line in lines if "Class List (" in line)
         inside = re.search(r"\((.*?)\)", header_line).group(1)
 
@@ -1116,9 +959,6 @@ def upload_students_to_class(class_id):
         }
         semester = semester_map.get(semester_raw, semester_raw)
 
-        # ==========================================================
-        # 5️⃣ Extract Instructor Name
-        # ==========================================================
         header_idx = next(i for i, l in enumerate(lines) if "Class List (" in l)
 
         instructor_raw = lines[header_idx + 1].strip().title()
@@ -1137,45 +977,33 @@ def upload_students_to_class(class_id):
 
         instructor_id = instructor_doc["instructor_id"]
 
-        # ==========================================================
-        # 6️⃣ Extract CLASS CODE (Class: A174)
-        # ==========================================================
         class_code = None
         for line in lines:
             if "Class:" in line:
                 m = re.search(r"Class:\s*([A-Za-z0-9]+)", line)
                 if m:
-                    class_code = m.group(1)    # A174
+                    class_code = m.group(1) 
                 break
 
-        # ==========================================================
-        # 7️⃣ Extract Course + Section (BSINFOTECH 4C)
-        # ==========================================================
         course_section = None
 
         for line in lines:
             if "Class:" in line and "::" in line:
                 parts = [p.strip() for p in line.split("::")]
-                # parts: ["Class: A174", "BSINFOTECH 4C", "SA 101", "Systems ..."]
                 if len(parts) > 1:
-                    course_section = parts[1]   # "BSINFOTECH 4C"
+                    course_section = parts[1]  
                 break
 
         if not course_section:
             return jsonify({"error": "Unable to extract course & section"}), 400
 
-        # Split last space
         course, section = course_section.rsplit(" ", 1)
 
-        # Program restriction
         if course.upper() != admin_program:
             return jsonify({
                 "error": f"Course '{course}' does NOT match your program '{admin_program}'"
             }), 403
 
-        # ==========================================================
-        # 8️⃣ Extract Subject Code 
-        # ==========================================================
         subject_code = None
 
         for line in lines:
@@ -1188,9 +1016,6 @@ def upload_students_to_class(class_id):
         if not subject_code:
             return jsonify({"error": "Unable to extract subject code"}), 400
 
-        # ==========================================================
-        # 9️⃣ Get Subject Info from DB
-        # ==========================================================
         subject_doc = subjects_col.find_one({"subject_code": subject_code})
         if not subject_doc:
             return jsonify({"error": f"Subject '{subject_code}' not found"}), 404
@@ -1198,9 +1023,6 @@ def upload_students_to_class(class_id):
         subject_title = subject_doc["subject_title"]
         year_level = subject_doc["year_level"]
 
-        # ==========================================================
-        # 🔟 Extract Student IDs (multi-page)
-        # ==========================================================
         student_ids = re.findall(r"\b\d{2}-\d-\d-\d{4}\b", full_text)
 
         if not student_ids:
@@ -1214,7 +1036,7 @@ def upload_students_to_class(class_id):
 
             if not stu:
                 skipped_ids.append(sid)
-                continue   # skip missing students, do NOT stop upload
+                continue  
 
             students_list.append({
                 "student_id": sid,
@@ -1224,9 +1046,6 @@ def upload_students_to_class(class_id):
                 "section": stu.get("Section") or section
             })
 
-        # ==========================================================
-        # 🔥 11️⃣ UPDATE CLASS (Schedule removed)
-        # ==========================================================
         classes_col.update_one(
             {"_id": ObjectId(class_id)},
             {"$set": {
@@ -1251,7 +1070,6 @@ def upload_students_to_class(class_id):
             "uploaded_count": len(students_list),
             "skipped_count": len(skipped_ids),
             "skipped_ids": skipped_ids,
-
             "class_code": class_code,
             "subject_code": subject_code,
             "subject_title": subject_title,
@@ -1282,9 +1100,6 @@ def preview_class_pdf():
 
         file_bytes = BytesIO(file.read())
 
-        # ========================================
-        # 1️⃣ Extract TEXT (Multi-page Safe)
-        # ========================================
         with pdfplumber.open(file_bytes) as pdf:
             full_text = "\n".join([
                 page.extract_text() or "" for page in pdf.pages
@@ -1292,9 +1107,6 @@ def preview_class_pdf():
 
         lines = full_text.split("\n")
 
-        # ========================================
-        # 2️⃣ School Year + Semester
-        # ========================================
         header_line = next(line for line in lines if "Class List (" in line)
         inside = re.search(r"\((.*?)\)", header_line).group(1)
 
@@ -1307,9 +1119,6 @@ def preview_class_pdf():
         }
         semester = semester_map.get(semester_raw, semester_raw)
 
-        # ========================================
-        # 3️⃣ Instructor
-        # ========================================
         header_idx = next(i for i, l in enumerate(lines) if "Class List (" in l)
 
         instructor_raw = lines[header_idx + 1].strip().title()
@@ -1324,9 +1133,6 @@ def preview_class_pdf():
         })
         instructor_id = instructor_doc["instructor_id"] if instructor_doc else None
 
-        # ========================================
-        # 4️⃣ Class Line
-        # ========================================
         class_line = next((l for l in lines if l.startswith("Class:")), None)
         if not class_line:
             return jsonify({"error": "Cannot find class line"}), 400
@@ -1341,21 +1147,12 @@ def preview_class_pdf():
 
         subject_code = parts[2]
 
-        # ========================================
-        # 5️⃣ Subject Info
-        # ========================================
         subject_doc = subjects_col.find_one({"subject_code": subject_code})
         subject_title = subject_doc["subject_title"] if subject_doc else None
         year_level = subject_doc["year_level"] if subject_doc else None
 
-        # ========================================
-        # 6️⃣ Extract Student IDs
-        # ========================================
         student_ids = re.findall(r"\b\d{2}-\d-\d-\d{4}\b", full_text)
 
-        # ========================================
-        # 7️⃣ Validate against DB
-        # ========================================
         valid_students = []
         skipped_students = []
 
@@ -1370,9 +1167,6 @@ def preview_class_pdf():
             else:
                 skipped_students.append(sid)
 
-        # ========================================
-        # 8️⃣ Return Preview Data
-        # ========================================
         return jsonify({
             "preview": True,
             "class_code": class_code,
@@ -1411,13 +1205,12 @@ def get_students_by_class(class_id):
     if not cls:
         return jsonify({"error": "Class not found"}), 404
 
-    # ❗ Prevent admin from accessing another program’s classes
     if cls["course"].upper() != admin_program:
         return jsonify({"error": "Forbidden: You cannot access classes from another program"}), 403
 
     return jsonify(cls.get("students", [])), 200
 
-# 🟢 Delete a class
+# Delete a class
 @admin_bp.route("/api/classes/<id>", methods=["DELETE"])
 @jwt_required()
 def delete_class(id):
@@ -1431,16 +1224,14 @@ def delete_class(id):
     if not cls:
         return jsonify({"error": "Class not found"}), 404
 
-    # ❗ Prevent admin from deleting classes from another program
     if cls["course"].upper() != admin_program:
         return jsonify({"error": "Forbidden: You cannot delete another program’s class"}), 403
 
-    # After program check — safe to delete
     result = classes_col.delete_one({"_id": cls["_id"]})
 
     return jsonify({"message": "Class deleted successfully"}), 200
 
-# 🟢 Get all free classes (no instructor assigned)
+# Get all free classes (no instructor assigned)
 @admin_bp.route("/api/classes/free", methods=["GET"])
 @jwt_required()
 def get_free_classes():
@@ -1460,10 +1251,7 @@ def get_free_classes():
 
     return jsonify([_serialize_class(cls) for cls in free_classes]), 200
 
-
-# ==============================
-# ✅ Instructor Management
-# ==============================
+# Instructor Management
 @admin_bp.route("/api/instructors", methods=["GET"])
 def get_all_instructors():
     instructors = list(instructors_col.find().sort("first_name", 1))
@@ -1492,10 +1280,6 @@ def get_all_instructors():
 def assign_instructor_to_class(class_id):
     try:
         admin_program = get_jwt().get("program", "").upper()
-
-        # -----------------------------------------------------
-        # 1️⃣ Validate class exists first
-        # -----------------------------------------------------
         try:
             cls = classes_col.find_one({"_id": ObjectId(class_id)})
         except Exception:
@@ -1504,17 +1288,11 @@ def assign_instructor_to_class(class_id):
         if not cls:
             return jsonify({"error": "Class not found"}), 404
 
-        # -----------------------------------------------------
-        # 2️⃣ Prevent cross-program modification
-        # -----------------------------------------------------
         if cls.get("course", "").upper() != admin_program:
             return jsonify({
                 "error": "Forbidden: You cannot assign instructors to another program’s class"
             }), 403
 
-        # -----------------------------------------------------
-        # 3️⃣ Validate instructor ID
-        # -----------------------------------------------------
         data = request.get_json() or {}
         instructor_id = data.get("instructor_id")
 
@@ -1525,9 +1303,6 @@ def assign_instructor_to_class(class_id):
         if not instructor:
             return jsonify({"error": "Instructor not found"}), 404
 
-        # -----------------------------------------------------
-        # 4️⃣ Update class with instructor info
-        # -----------------------------------------------------
         update_data = {
             "instructor_id": instructor.get("instructor_id"),
             "instructor_first_name": instructor.get("first_name", "N/A"),
@@ -1542,9 +1317,6 @@ def assign_instructor_to_class(class_id):
             {"$set": update_data}
         )
 
-        # -----------------------------------------------------
-        # 5️⃣ Build clean response
-        # -----------------------------------------------------
         return jsonify({
             "message": "Instructor assigned successfully",
             "class_id": class_id,
@@ -1576,9 +1348,7 @@ def get_classes_by_instructor(instructor_id):
 
     return jsonify(serialized), 200
 
-# ==============================
-# ✅ Attendance Logs (Admin)
-# ==============================
+# Attendance Logs (Admin)
 @admin_bp.route("/api/attendance/logs", methods=["GET"])
 def get_attendance_logs():
     logs = []

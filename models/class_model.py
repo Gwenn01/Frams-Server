@@ -7,7 +7,7 @@ students_collection = db["students"]
 subjects_collection = db["subjects"]
 instructors_collection = db["instructors"]
 
-# ✅ Normalize schedule blocks consistently
+# Normalize schedule blocks consistently
 def normalize_schedule_blocks(blocks):
     normalized = []
     for block in blocks or []:
@@ -19,7 +19,7 @@ def normalize_schedule_blocks(blocks):
     return normalized
 
 
-# ✅ Assign student to a class (manual/admin or auto)
+# Assign student to a class (manual/admin or auto)
 def assign_student_to_subject(student_id, subject_id, course=None, year_level=None, section=None, semester=None):
     student = students_collection.find_one({
         "$or": [
@@ -48,7 +48,7 @@ def assign_student_to_subject(student_id, subject_id, course=None, year_level=No
         "semester": semester or subject.get("semester")
     }
 
-    # ✅ Ensure uniqueness by subject + block
+    # Ensure uniqueness by subject + block
     class_doc = classes_collection.find_one({
         "subject_id": str(subject_id),
         "course": student_info["course"],
@@ -84,7 +84,7 @@ def assign_student_to_subject(student_id, subject_id, course=None, year_level=No
     return {"message": f"Student {student_id} assigned to {subject.get('subject_code')}"}
 
 
-# ✅ Assign student via COR (using parsed block info)
+# Assign student via COR (using parsed block info)
 def assign_student_from_cor(student, subject_doc, section, year_level, semester):
     subject_id = str(subject_doc["_id"])
 
@@ -130,7 +130,7 @@ def assign_student_from_cor(student, subject_doc, section, year_level, semester)
     return {"message": "Student assigned from COR successfully"}
 
 
-# ✅ Auto-assign matching students to subject (bulk for same block)
+# Auto-assign matching students to subject (bulk for same block)
 def auto_assign_matching_students(subject_id, course, year_level, section, semester):
     matching_students = students_collection.find({
         "$or": [
@@ -145,7 +145,7 @@ def auto_assign_matching_students(subject_id, course, year_level, section, semes
             assign_student_to_subject(student_id, subject_id, course, year_level, section, semester)
 
 
-# ✅ Get all student-class entries for a subject
+# Get all student-class entries for a subject
 def get_students_by_subject(subject_id, course=None, year_level=None, section=None, semester=None):
     query = {"subject_id": str(subject_id)}
     if course: query["course"] = course
@@ -155,7 +155,7 @@ def get_students_by_subject(subject_id, course=None, year_level=None, section=No
     return list(classes_collection.find(query))
 
 
-# ✅ Get all subjects a student is enrolled in
+# Get all subjects a student is enrolled in
 def get_subjects_by_student(student_id):
     if not student_id:
         return []
@@ -182,7 +182,7 @@ def get_subjects_by_student(student_id):
     return subjects
 
 
-# ✅ Get all classes with subject + students
+# Get all classes with subject + students
 def get_all_classes_with_details():
     classes = list(classes_collection.find())
     results = []

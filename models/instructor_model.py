@@ -1,5 +1,4 @@
 # models/instructor_model.py
-
 from config.db_config import db
 
 instructors_collection = db["instructors"]

@@ -4,32 +4,23 @@ from datetime import datetime, timedelta, timezone
 attendance_logs_collection = db["attendance_logs"]
 classes_collection = db["classes"]
 
-# -----------------------------
 # Timezone Setup
-# -----------------------------
 PH_TZ = timezone(timedelta(hours=8))  # GMT+8 Philippine Time
 
-
-# -----------------------------
 # Helpers
-# -----------------------------
 def _today_date_str():
-    """Return today's date as YYYY-MM-DD (PH time, string)."""
     return datetime.now(PH_TZ).strftime("%Y-%m-%d")
 
 
 def _now_time_str():
-    """Return current time HH:MM:SS (PH time)."""
     return datetime.now(PH_TZ).strftime("%H:%M:%S")
 
 
 def _now_datetime():
-    """Return current datetime (PH time, with tzinfo)."""
     return datetime.now(PH_TZ)
 
 
 def _parse_date_str(date_val):
-    """Parse string/datetime into YYYY-MM-DD string (PH time)."""
     if isinstance(date_val, datetime):
         if date_val.tzinfo is None:
             date_val = date_val.replace(tzinfo=PH_TZ)
@@ -44,7 +35,6 @@ def _parse_date_str(date_val):
 
 
 def _parse_class_start_time(class_start_time):
-    """Parse attendance_start_time into datetime (PH local time)."""
     if not class_start_time:
         return None
     if isinstance(class_start_time, datetime):
@@ -74,20 +64,19 @@ def _parse_class_start_time(class_start_time):
 # Session Control
 # -----------------------------
 def close_attendance_session(class_id: str):
-    """Mark attendance session as closed for a class."""
     classes_collection.update_one(
         {"class_id": class_id},
         {"$set": {"is_attendance_active": False, "active_session_id": None}}
     )
-    print(f"⛔ Attendance session auto-closed for class {class_id}")
+    print(f"Attendance session auto-closed for class {class_id}")
 
 
 # -----------------------------
 # Attendance Functions
 # -----------------------------
 def log_attendance(class_data, student_data, status="Present", class_start_time=None):
-    now = _now_datetime()          # full datetime in PH
-    today_date = _today_date_str() # string date
+    now = _now_datetime()      
+    today_date = _today_date_str()
     time_str = _now_time_str()
 
     # ---- Late computation ----
@@ -111,7 +100,7 @@ def log_attendance(class_data, student_data, status="Present", class_start_time=
         "instructor_last_name": class_data.get("instructor_last_name"),
         "course": class_data.get("course"),
         "section": class_data.get("section"),
-        "date": today_date,    # ✅ stored as string YYYY-MM-DD
+        "date": today_date, 
         "students": []
     }
 
@@ -128,7 +117,7 @@ def log_attendance(class_data, student_data, status="Present", class_start_time=
             "students.$.last_name": student_data["last_name"],
             "students.$.status": status,
             "students.$.time": time_str,
-            "students.$.time_logged": now   # ✅ real datetime
+            "students.$.time_logged": now 
         }}
     )
 
@@ -145,7 +134,7 @@ def log_attendance(class_data, student_data, status="Present", class_start_time=
             }}}
         )
 
-    print(f"✅ {status} logged for {student_data['first_name']} {student_data['last_name']}")
+    print(f"{status} logged for {student_data['first_name']} {student_data['last_name']}")
     return {
         "class_id": class_data["class_id"],
         "date": today_date,
@@ -184,8 +173,6 @@ def get_attendance_logs_by_student(student_id):
                 "course": d.get("course"),
                 "section": d.get("section"),
                 "date": d.get("date"),
-
-                # 🔽 Flattened student fields
                 "student_id": s.get("student_id"),
                 "first_name": s.get("first_name"),
                 "last_name": s.get("last_name"),
@@ -200,7 +187,6 @@ def get_attendance_logs_by_student(student_id):
     return results
 
 def get_attendance_logs_by_class_and_date(class_id, start_date, end_date):
-    # 🔹 Ensure class_id is always a string for consistent matching
     if not isinstance(class_id, str):
         class_id = str(class_id)
 
