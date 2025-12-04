@@ -184,6 +184,7 @@ def get_stats():
     program = request.args.get("program")  # e.g. BSINFOTECH / BSCS
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
+    attendance_today = 0
     query = {"date": today}
     if program:
         query["$or"] = [
