@@ -112,7 +112,7 @@ def register_admin():
         "user_id": user_id,
         "email": email,
         "password": hashed_password,
-        "program": program,  # ✅ Added field
+        "program": program, 
         "created_at": datetime.utcnow(),
     }
 
@@ -181,7 +181,7 @@ def get_admin_profile():
 # Admin Overview Endpoints
 @admin_bp.route("/api/admin/overview/stats", methods=["GET"])
 def get_stats():
-    program = request.args.get("program")  # e.g. BSINFOTECH / BSCS
+    program = request.args.get("program")  
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
     attendance_today = 0
@@ -468,7 +468,7 @@ def delete_student(student_id):
 
     except Exception as e:
         import traceback
-        print("❌ Error deleting student:", e)
+        print("Error deleting student:", e)
         print(traceback.format_exc())
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
@@ -538,7 +538,7 @@ def get_current_semester():
         return jsonify(sem), 200
 
     except Exception as e:
-        print("❌ GET /semester/current error:", e)
+        print("GET /semester/current error:", e)
         return jsonify({"error": str(e)}), 500
 
 
@@ -578,7 +578,7 @@ def update_single_semester():
             "school_year": school_year,
             "start_date": data["start_date"],
             "end_date": data["end_date"],
-            "is_active": True,  # keep active always for now
+            "is_active": True,
         }
 
         # Update the only semester document
@@ -601,16 +601,13 @@ def update_single_semester():
 def get_curriculums():
     """Return all distinct curriculum values from subjects collection."""
     try:
-        # Fetch unique curriculum values
         curr_list = subjects_col.distinct("curriculum")
-
-        # Clean and sort
         curr_list = sorted(list({str(c).strip() for c in curr_list if c}))
 
         return jsonify({"curriculums": curr_list}), 200
 
     except Exception as e:
-        print("❌ Error in GET /curriculum:", e)
+        print("Error in GET /curriculum:", e)
         return jsonify({"error": "Failed to load curriculum list"}), 500
 
 @admin_bp.route("/api/admin/semester/activate", methods=["PUT"])
@@ -658,7 +655,7 @@ def activate_single_semester():
         }), 200
 
     except Exception as e:
-        print("❌ PUT /semester/activate error:", e)
+        print("PUT /semester/activate error:", e)
         return jsonify({"error": str(e)}), 500
     
 @admin_bp.route("/api/admin/subjects/active", methods=["GET"])
@@ -710,11 +707,11 @@ def get_active_subjects():
         }), 200
 
     except Exception as e:
-        print("❌ Error in get_active_subjects:", e)
+        print("Error in get_active_subjects:", e)
         return jsonify({"error": str(e)}), 500
 
 
-# ✅ Class Management 
+# Class Management 
 from datetime import datetime
 import pandas as pd
 
@@ -833,7 +830,7 @@ def get_class(id):
     if not cls:
         return jsonify({"error": "Class not found"}), 404
 
-    # 🚫 Block access if class belongs to another program
+    # Block access if class belongs to another program
     if cls.get("course", "").upper() != admin_program:
         return jsonify({"error": "You are not allowed to access classes from another program"}), 403
 
@@ -1086,7 +1083,7 @@ def upload_students_to_class(class_id):
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
     
-# 🟢 PREVIEW Class List PDF (WITH VALID/MISSING STUDENTS)
+# PREVIEW Class List PDF (WITH VALID/MISSING STUDENTS)
 @admin_bp.route("/api/classes/preview-pdf", methods=["POST"])
 @jwt_required()
 def preview_class_pdf():
@@ -1192,7 +1189,7 @@ def preview_class_pdf():
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
-# 🟢 Get students assigned to a class
+# Get students assigned to a class
 @admin_bp.route("/api/classes/<class_id>/students", methods=["GET"])
 @jwt_required()
 def get_students_by_class(class_id):
@@ -1352,35 +1349,56 @@ def get_classes_by_instructor(instructor_id):
 # Attendance Logs (Admin)
 @admin_bp.route("/api/attendance/logs", methods=["GET"])
 def get_attendance_logs():
-    logs = []
+    try:
+        logs = []
 
-    cursor = attendance_logs_col.find().sort("date", -1)
-    for doc in cursor:
-        class_id = str(doc.get("class_id"))
-        subject_code = doc.get("subject_code", "")
-        subject_title = doc.get("subject_title", "")
-        instructor_first_name = doc.get("instructor_first_name", "")
-        instructor_last_name = doc.get("instructor_last_name", "")
-        section = doc.get("section", "")
-        course = doc.get("course", "") 
-        date = doc.get("date")
+        # Fetch ALL documents from attendance_logs (sorted newest to oldest)
+        cursor = attendance_logs_col.find().sort("date", -1)
 
-        # Flatten each student log
-        for st in doc.get("students", []):
-            logs.append({
-                "student_id": st.get("student_id"),
-                "first_name": st.get("first_name"),
-                "last_name": st.get("last_name"),
-                "status": st.get("status"),
-                "time": st.get("time"),
-                "date": date,
-                "subject_code": subject_code,
-                "subject_title": subject_title,
-                "instructor_name": f"{instructor_first_name} {instructor_last_name}".strip(),
-                "section": section,
-                "course": course,  
-                "class_id": class_id,
-            })
+        for doc in cursor:
 
-    return jsonify(logs), 200
+            # Extract class-level fields from the document
+            class_id = str(doc.get("class_id"))
+            subject_code = doc.get("subject_code", "")
+            subject_title = doc.get("subject_title", "")
+            instructor_first_name = doc.get("instructor_first_name", "")
+            instructor_last_name = doc.get("instructor_last_name", "")
+            instructor_name = f"{instructor_first_name} {instructor_last_name}".strip()
+            section = doc.get("section", "")
+            course = doc.get("course", "")
+            semester = doc.get("semester", "")
+            school_year = doc.get("school_year", "")
+            year_level = doc.get("year_level", "")
+            date = doc.get("date")
+            start_time = doc.get("start_time")
+            end_time = doc.get("end_time")
+
+            students = doc.get("students", [])
+            for s in students:
+                logs.append({
+                    # Student details
+                    "student_id": s.get("student_id"),
+                    "first_name": s.get("first_name", ""),
+                    "last_name": s.get("last_name", ""),
+                    "status": s.get("status", ""),
+                    "time": s.get("time", ""),
+                    "date": date,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "class_id": class_id,
+                    "subject_code": subject_code,
+                    "subject_title": subject_title,
+                    "section": section,
+                    "course": course,
+                    "year_level": year_level,
+                    "instructor_name": instructor_name,
+                    "semester": semester,
+                    "school_year": school_year
+                })
+
+        return jsonify(logs), 200
+
+    except Exception as e:
+        print("❌ Error loading attendance logs:", e)
+        return jsonify({"error": "Failed to load attendance logs"}), 500
 
