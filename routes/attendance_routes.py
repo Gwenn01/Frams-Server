@@ -582,9 +582,12 @@ def get_sessions_by_class(class_id):
         return jsonify({"error": "Internal server error"}), 500
 
 @attendance_bp.route("/sessions", methods=["GET"])
-def get_all_sessions():
+def get_all_valid_sessions():
     try:
-        logs = list(attendance_logs_col.find())
+        logs = attendance_logs_col.find({
+            "semester": {"$exists": True, "$ne": ""},
+            "school_year": {"$exists": True, "$ne": ""}
+        })
 
         sessions = []
         for log in logs:
@@ -601,8 +604,8 @@ def get_all_sessions():
                 "section": log.get("section"),
                 "semester": log.get("semester"),
                 "school_year": log.get("school_year"),
-                "instructor_first_name": log.get("instructor_first_name"),
-                "instructor_last_name": log.get("instructor_last_name"),
+                "instructor_first_name": log.get("instructor_first_name", ""),
+                "instructor_last_name": log.get("instructor_last_name", ""),
             })
 
         return jsonify({
