@@ -27,11 +27,9 @@ PH_TZ = timezone(timedelta(hours=8))
 
 # Utilities
 def _today_date():
-    """Return today's date normalized to midnight (PH time)."""
     return datetime.now(PH_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
 
 def _parse_date(date_str):
-    """Convert YYYY-MM-DD string to datetime (PH tz), fallback to today."""
     if not date_str:
         return _today_date()
     try:
@@ -455,7 +453,7 @@ def get_all_logs_grouped():
         return jsonify({"error": "Internal server error"}), 500
 
 
-# ✅ Bulk mark ABSENT for students (manual)
+# Bulk mark ABSENT for students (manual)
 @attendance_bp.route("/mark-absent", methods=["POST"])
 def mark_absent():
     try:
@@ -498,7 +496,7 @@ def mark_absent():
         print("Error in /mark-absent:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
     
-# ✅ Mark a student as Excused (Instructor action)
+# Mark a student as Excused (Instructor action)
 @attendance_bp.route("/mark-excused", methods=["POST"])
 def mark_excused():
     try:
@@ -580,5 +578,39 @@ def get_sessions_by_class(class_id):
 
     except Exception:
         import traceback
-        print("❌ Error in /sessions/<class_id>:", traceback.format_exc())
+        print("Error in /sessions/<class_id>:", traceback.format_exc())
+        return jsonify({"error": "Internal server error"}), 500
+
+@attendance_bp.route("/sessions", methods=["GET"])
+def get_all_sessions():
+    try:
+        logs = list(attendance_logs_col.find())
+
+        sessions = []
+        for log in logs:
+            sessions.append({
+                "_id": str(log["_id"]),
+                "class_id": log.get("class_id"),
+                "date": log.get("date"),
+                "start_time": log.get("start_time"),
+                "end_time": log.get("end_time"),
+                "students": log.get("students", []),
+                "subject_code": log.get("subject_code"),
+                "subject_title": log.get("subject_title"),
+                "course": log.get("course"),
+                "section": log.get("section"),
+                "semester": log.get("semester"),
+                "school_year": log.get("school_year"),
+                "instructor_first_name": log.get("instructor_first_name"),
+                "instructor_last_name": log.get("instructor_last_name"),
+            })
+
+        return jsonify({
+            "success": True,
+            "sessions": sessions
+        }), 200
+
+    except Exception:
+        import traceback
+        print("Error in /sessions:", traceback.format_exc())
         return jsonify({"error": "Internal server error"}), 500
